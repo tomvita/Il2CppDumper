@@ -257,6 +257,17 @@ namespace Il2CppDumper
             var executor = new Il2CppExecutor(metadata, il2Cpp);
             var decompiler = new Il2CppDecompiler(executor);
             decompiler.Decompile(config, outputDir);
+            try
+            {
+                var dumpPath = Path.Combine(outputDir, "dump.cs");
+                var index1Path = Path.Combine(outputDir, "index1.bin");
+                var index2Path = Path.Combine(outputDir, "index2.bin");
+                RvaIndexBuilder.Build(dumpPath, index1Path, index2Path);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"WARN: Failed to build RVA indexes: {e.Message}");
+            }
             Console.WriteLine("Done!");
             if (config.GenerateStruct)
             {
