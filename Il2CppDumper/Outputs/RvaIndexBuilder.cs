@@ -8,8 +8,8 @@ namespace Il2CppDumper
 {
     internal static class RvaIndexBuilder
     {
-        private const ushort FormatVersionV2 = 2;
-        private const ushort CurrentFormatVersion = FormatVersionV2;
+        private const ushort FormatVersionV3 = 3;
+        private const ushort CurrentFormatVersion = FormatVersionV3;
         private const int DefaultMaxRecordsPerBlock = 1024;
         private static readonly Regex MethodRvaRegex = new(@"^\t// RVA:\s*0x([0-9A-Fa-f]+)\b", RegexOptions.Compiled);
         private static readonly Regex GenericInstMethodRvaRegex = new(@"^\t\|-RVA:\s*0x([0-9A-Fa-f]+)\b", RegexOptions.Compiled);
@@ -17,20 +17,20 @@ namespace Il2CppDumper
         private readonly struct RvaLine
         {
             public readonly ulong Rva;
-            public readonly uint Line;
+            public readonly uint DumpOffset;
 
-            public RvaLine(ulong rva, uint line)
+            public RvaLine(ulong rva, uint dumpOffset)
             {
                 Rva = rva;
-                Line = line;
+                DumpOffset = dumpOffset;
             }
         }
 
         private sealed class Block
         {
             public ulong StartRva;
-            public uint StartLine;
-            public List<(uint AddrDelta, uint Line)> Records = new();
+            public uint StartDumpOffset;
+            public List<(uint AddrDelta, uint DumpOffset)> Records = new();
         }
 
         private readonly struct Index1Entry
@@ -65,7 +65,7 @@ namespace Il2CppDumper
             {
                 var cmp = a.Rva.CompareTo(b.Rva);
                 if (cmp != 0) return cmp;
-                return a.Line.CompareTo(b.Line);
+                return a.DumpOffset.CompareTo(b.DumpOffset);
             });
 
             var blocks = BuildBlocks(records, maxRecordsPerBlock);
@@ -75,28 +75,67 @@ namespace Il2CppDumper
         private static List<RvaLine> ParseRvaLines(string dumpPath, out uint totalDumpLines)
         {
             var records = new List<RvaLine>(16384);
-            using var reader = new StreamReader(dumpPath, Encoding.UTF8, true);
-            string line;
             uint lineNo = 0;
-            while ((line = reader.ReadLine()) != null)
+            uint lineStartOffset = 0;
+            var lineBytes = new List<byte>(256);
+
+            using var fs = new FileStream(dumpPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            int currentByte;
+            while ((currentByte = fs.ReadByte()) >= 0)
             {
-                lineNo++;
-                Match match = MethodRvaRegex.Match(line);
-                if (!match.Success)
+                if (currentByte == (byte)'\n')
                 {
-                    match = GenericInstMethodRvaRegex.Match(line);
+                    ProcessLine(lineBytes, lineStartOffset, ref lineNo, records);
+                    lineStartOffset = ToDumpOffset(fs.Position);
+                    lineBytes.Clear();
                 }
-                if (!match.Success || match.Groups.Count < 2)
+                else
                 {
-                    continue;
-                }
-                if (ulong.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var rva))
-                {
-                    records.Add(new RvaLine(rva, lineNo));
+                    lineBytes.Add((byte)currentByte);
                 }
             }
+
+            if (lineBytes.Count > 0)
+            {
+                ProcessLine(lineBytes, lineStartOffset, ref lineNo, records);
+            }
+
             totalDumpLines = lineNo;
             return records;
+        }
+
+        private static void ProcessLine(List<byte> lineBytes, uint lineStartOffset, ref uint lineNo, List<RvaLine> records)
+        {
+            lineNo++;
+            var lineLength = lineBytes.Count;
+            if (lineLength > 0 && lineBytes[lineLength - 1] == (byte)'\r')
+            {
+                lineLength--;
+            }
+
+            var line = Encoding.UTF8.GetString(lineBytes.ToArray(), 0, lineLength);
+            Match match = MethodRvaRegex.Match(line);
+            if (!match.Success)
+            {
+                match = GenericInstMethodRvaRegex.Match(line);
+            }
+            if (!match.Success || match.Groups.Count < 2)
+            {
+                return;
+            }
+            if (ulong.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var rva))
+            {
+                records.Add(new RvaLine(rva, lineStartOffset));
+            }
+        }
+
+        private static uint ToDumpOffset(long position)
+        {
+            if (position < 0 || (ulong)position > uint.MaxValue)
+            {
+                throw new InvalidDataException("dump.cs is larger than supported 32-bit offset range");
+            }
+            return (uint)position;
         }
 
         private static List<Block> BuildBlocks(List<RvaLine> records, int maxRecordsPerBlock)
@@ -109,9 +148,9 @@ namespace Il2CppDumper
                 var block = new Block
                 {
                     StartRva = first.Rva,
-                    StartLine = first.Line
+                    StartDumpOffset = first.DumpOffset
                 };
-                block.Records.Add((0, first.Line));
+                block.Records.Add((0, first.DumpOffset));
                 i++;
 
                 var prevRva = first.Rva;
@@ -123,7 +162,7 @@ namespace Il2CppDumper
                     {
                         break;
                     }
-                    block.Records.Add(((uint)delta, next.Line));
+                    block.Records.Add(((uint)delta, next.DumpOffset));
                     prevRva = next.Rva;
                     i++;
                 }
@@ -148,12 +187,12 @@ namespace Il2CppDumper
                 {
                     var blockOffset = (ulong)fs2.Position;
                     bw2.Write(block.StartRva);
-                    bw2.Write(block.StartLine);
+                    bw2.Write(block.StartDumpOffset);
                     bw2.Write((uint)block.Records.Count);
                     foreach (var rec in block.Records)
                     {
                         bw2.Write(rec.AddrDelta);
-                        bw2.Write(rec.Line);
+                        bw2.Write(rec.DumpOffset);
                     }
                     var blockSize = (uint)((ulong)fs2.Position - blockOffset);
                     index1Entries.Add(new Index1Entry(block.StartRva, blockOffset, blockSize));

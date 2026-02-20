@@ -12,7 +12,8 @@ public:
     // Load index1/index2 files and prepare in-memory routing table from index1.
     bool Load(const std::string& index1Path, const std::string& index2Path, std::string* error = nullptr);
 
-    // Finds the line whose RVA is the greatest RVA <= queryRva.
+    // Finds the mapped value whose RVA is the greatest RVA <= queryRva.
+    // v1/v2 indexes map to dump.cs line numbers, v3+ maps to dump.cs byte offsets.
     // Returns false if no such line exists.
     bool FindClosestLowerOrEqualLine(uint64_t queryRva, uint32_t* outLine) const;
     uint32_t GetTotalDumpLines() const { return totalDumpLines_; }

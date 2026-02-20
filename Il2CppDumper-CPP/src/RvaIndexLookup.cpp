@@ -12,6 +12,7 @@ constexpr std::array<uint8_t, 4> kIndex1Magic = {'I', 'D', 'X', '1'};
 constexpr std::array<uint8_t, 4> kIndex2Magic = {'I', 'D', 'X', '2'};
 constexpr uint16_t kVersion1 = 1;
 constexpr uint16_t kVersion2 = 2;
+constexpr uint16_t kVersion3 = 3;
 
 } // namespace
 
@@ -44,7 +45,7 @@ bool RvaIndexLookup::Load(const std::string& index1Path, const std::string& inde
     }
 
     const uint16_t version = ReadLe16(header.data() + 4);
-    if (version != kVersion1 && version != kVersion2) {
+    if (version != kVersion1 && version != kVersion2 && version != kVersion3) {
         SetError(error, "Unsupported index1 version");
         return false;
     }
@@ -103,13 +104,13 @@ bool RvaIndexLookup::Load(const std::string& index1Path, const std::string& inde
 
     const uint16_t idx2Version = ReadLe16(idx2HeaderBase.data() + 4);
     const uint32_t blockCount = ReadLe32(idx2HeaderBase.data() + 8);
-    if (idx2Version != kVersion1 && idx2Version != kVersion2) {
+    if (idx2Version != kVersion1 && idx2Version != kVersion2 && idx2Version != kVersion3) {
         SetError(error, "Unsupported index2 version");
         index1Entries_.clear();
         index2Path_.clear();
         return false;
     }
-    if (idx2Version == kVersion2) {
+    if (idx2Version >= kVersion2) {
         std::array<uint8_t, 4> totalLinesBuf{};
         if (!ReadFully(index2Stream_, totalLinesBuf.data(), totalLinesBuf.size())) {
             SetError(error, "Failed to read index2 total_dump_lines");
