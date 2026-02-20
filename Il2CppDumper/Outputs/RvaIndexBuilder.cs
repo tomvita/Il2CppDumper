@@ -11,7 +11,8 @@ namespace Il2CppDumper
         private const ushort FormatVersionV2 = 2;
         private const ushort CurrentFormatVersion = FormatVersionV2;
         private const int DefaultMaxRecordsPerBlock = 1024;
-        private static readonly Regex RvaRegex = new(@"RVA:\s*0x([0-9A-Fa-f]+)", RegexOptions.Compiled);
+        private static readonly Regex MethodRvaRegex = new(@"^\t// RVA:\s*0x([0-9A-Fa-f]+)\b", RegexOptions.Compiled);
+        private static readonly Regex GenericInstMethodRvaRegex = new(@"^\t\|-RVA:\s*0x([0-9A-Fa-f]+)\b", RegexOptions.Compiled);
 
         private readonly struct RvaLine
         {
@@ -80,17 +81,18 @@ namespace Il2CppDumper
             while ((line = reader.ReadLine()) != null)
             {
                 lineNo++;
-                var matches = RvaRegex.Matches(line);
-                foreach (Match match in matches)
+                Match match = MethodRvaRegex.Match(line);
+                if (!match.Success)
                 {
-                    if (!match.Success || match.Groups.Count < 2)
-                    {
-                        continue;
-                    }
-                    if (ulong.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var rva))
-                    {
-                        records.Add(new RvaLine(rva, lineNo));
-                    }
+                    match = GenericInstMethodRvaRegex.Match(line);
+                }
+                if (!match.Success || match.Groups.Count < 2)
+                {
+                    continue;
+                }
+                if (ulong.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var rva))
+                {
+                    records.Add(new RvaLine(rva, lineNo));
                 }
             }
             totalDumpLines = lineNo;
