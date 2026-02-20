@@ -15,6 +15,7 @@ public:
     // Finds the line whose RVA is the greatest RVA <= queryRva.
     // Returns false if no such line exists.
     bool FindClosestLowerOrEqualLine(uint64_t queryRva, uint32_t* outLine) const;
+    uint32_t GetTotalDumpLines() const { return totalDumpLines_; }
 
 private:
     struct Index1Entry {
@@ -40,6 +41,7 @@ private:
 
     std::vector<Index1Entry> index1Entries_;
     std::string index2Path_;
+    uint32_t totalDumpLines_ = 0;
 
     // Mutable for cheap repeated lookups from a const query API.
     mutable std::ifstream index2Stream_;
@@ -52,4 +54,3 @@ private:
 };
 
 } // namespace Il2CppDumper
-

@@ -10,7 +10,8 @@ namespace {
 
 constexpr std::array<uint8_t, 4> kIndex1Magic = {'I', 'D', 'X', '1'};
 constexpr std::array<uint8_t, 4> kIndex2Magic = {'I', 'D', 'X', '2'};
-constexpr uint16_t kSupportedVersion = 1;
+constexpr uint16_t kVersion1 = 1;
+constexpr uint16_t kVersion2 = 2;
 
 } // namespace
 
@@ -22,6 +23,7 @@ bool RvaIndexLookup::Load(const std::string& index1Path, const std::string& inde
     }
     index2OpenAttempted_ = false;
     lastError_.clear();
+    totalDumpLines_ = 0;
     cachedBlockIndex_ = static_cast<size_t>(-1);
     cachedBlock_ = {};
 
@@ -42,7 +44,7 @@ bool RvaIndexLookup::Load(const std::string& index1Path, const std::string& inde
     }
 
     const uint16_t version = ReadLe16(header.data() + 4);
-    if (version != kSupportedVersion) {
+    if (version != kVersion1 && version != kVersion2) {
         SetError(error, "Unsupported index1 version");
         return false;
     }
@@ -84,28 +86,38 @@ bool RvaIndexLookup::Load(const std::string& index1Path, const std::string& inde
         return false;
     }
 
-    std::array<uint8_t, 12> idx2Header{};
+    std::array<uint8_t, 12> idx2HeaderBase{};
     index2Stream_.seekg(0, std::ios::beg);
-    if (!ReadFully(index2Stream_, idx2Header.data(), idx2Header.size())) {
+    if (!ReadFully(index2Stream_, idx2HeaderBase.data(), idx2HeaderBase.size())) {
         SetError(error, "Failed to read index2 header");
         index1Entries_.clear();
         index2Path_.clear();
         return false;
     }
-    if (!std::equal(kIndex2Magic.begin(), kIndex2Magic.end(), idx2Header.begin())) {
+    if (!std::equal(kIndex2Magic.begin(), kIndex2Magic.end(), idx2HeaderBase.begin())) {
         SetError(error, "index2 magic mismatch (expected IDX2)");
         index1Entries_.clear();
         index2Path_.clear();
         return false;
     }
 
-    const uint16_t idx2Version = ReadLe16(idx2Header.data() + 4);
-    const uint32_t blockCount = ReadLe32(idx2Header.data() + 8);
-    if (idx2Version != kSupportedVersion) {
+    const uint16_t idx2Version = ReadLe16(idx2HeaderBase.data() + 4);
+    const uint32_t blockCount = ReadLe32(idx2HeaderBase.data() + 8);
+    if (idx2Version != kVersion1 && idx2Version != kVersion2) {
         SetError(error, "Unsupported index2 version");
         index1Entries_.clear();
         index2Path_.clear();
         return false;
+    }
+    if (idx2Version == kVersion2) {
+        std::array<uint8_t, 4> totalLinesBuf{};
+        if (!ReadFully(index2Stream_, totalLinesBuf.data(), totalLinesBuf.size())) {
+            SetError(error, "Failed to read index2 total_dump_lines");
+            index1Entries_.clear();
+            index2Path_.clear();
+            return false;
+        }
+        totalDumpLines_ = ReadLe32(totalLinesBuf.data());
     }
     if (blockCount != index1Entries_.size()) {
         SetError(error, "index1 entry count does not match index2 block count");

@@ -8,7 +8,8 @@ namespace Il2CppDumper
 {
     internal static class RvaIndexBuilder
     {
-        private const uint FormatVersion = 1;
+        private const ushort FormatVersionV2 = 2;
+        private const ushort CurrentFormatVersion = FormatVersionV2;
         private const int DefaultMaxRecordsPerBlock = 1024;
         private static readonly Regex RvaRegex = new(@"RVA:\s*0x([0-9A-Fa-f]+)", RegexOptions.Compiled);
 
@@ -52,10 +53,10 @@ namespace Il2CppDumper
                 throw new ArgumentOutOfRangeException(nameof(maxRecordsPerBlock));
             }
 
-            var records = ParseRvaLines(dumpPath);
+            var records = ParseRvaLines(dumpPath, out var totalDumpLines);
             if (records.Count == 0)
             {
-                WriteEmptyIndexes(index1Path, index2Path);
+                WriteEmptyIndexes(index1Path, index2Path, totalDumpLines);
                 return;
             }
 
@@ -67,10 +68,10 @@ namespace Il2CppDumper
             });
 
             var blocks = BuildBlocks(records, maxRecordsPerBlock);
-            WriteIndexes(index1Path, index2Path, blocks);
+            WriteIndexes(index1Path, index2Path, blocks, totalDumpLines);
         }
 
-        private static List<RvaLine> ParseRvaLines(string dumpPath)
+        private static List<RvaLine> ParseRvaLines(string dumpPath, out uint totalDumpLines)
         {
             var records = new List<RvaLine>(16384);
             using var reader = new StreamReader(dumpPath, Encoding.UTF8, true);
@@ -92,6 +93,7 @@ namespace Il2CppDumper
                     }
                 }
             }
+            totalDumpLines = lineNo;
             return records;
         }
 
@@ -128,16 +130,17 @@ namespace Il2CppDumper
             return blocks;
         }
 
-        private static void WriteIndexes(string index1Path, string index2Path, List<Block> blocks)
+        private static void WriteIndexes(string index1Path, string index2Path, List<Block> blocks, uint totalDumpLines)
         {
             var index1Entries = new List<Index1Entry>(blocks.Count);
             using (var fs2 = new FileStream(index2Path, FileMode.Create, FileAccess.Write, FileShare.None))
             using (var bw2 = new BinaryWriter(fs2, Encoding.UTF8, false))
             {
                 bw2.Write(new byte[] { (byte)'I', (byte)'D', (byte)'X', (byte)'2' });
-                bw2.Write((ushort)FormatVersion);
+                bw2.Write(CurrentFormatVersion);
                 bw2.Write((ushort)0);
                 bw2.Write((uint)blocks.Count);
+                bw2.Write(totalDumpLines);
 
                 foreach (var block in blocks)
                 {
@@ -158,7 +161,7 @@ namespace Il2CppDumper
             using var fs1 = new FileStream(index1Path, FileMode.Create, FileAccess.Write, FileShare.None);
             using var bw1 = new BinaryWriter(fs1, Encoding.UTF8, false);
             bw1.Write(new byte[] { (byte)'I', (byte)'D', (byte)'X', (byte)'1' });
-            bw1.Write((ushort)FormatVersion);
+            bw1.Write(CurrentFormatVersion);
             bw1.Write((ushort)0);
             bw1.Write((uint)index1Entries.Count);
             foreach (var entry in index1Entries)
@@ -170,21 +173,22 @@ namespace Il2CppDumper
             }
         }
 
-        private static void WriteEmptyIndexes(string index1Path, string index2Path)
+        private static void WriteEmptyIndexes(string index1Path, string index2Path, uint totalDumpLines)
         {
             using (var fs2 = new FileStream(index2Path, FileMode.Create, FileAccess.Write, FileShare.None))
             using (var bw2 = new BinaryWriter(fs2, Encoding.UTF8, false))
             {
                 bw2.Write(new byte[] { (byte)'I', (byte)'D', (byte)'X', (byte)'2' });
-                bw2.Write((ushort)FormatVersion);
+                bw2.Write(CurrentFormatVersion);
                 bw2.Write((ushort)0);
                 bw2.Write((uint)0);
+                bw2.Write(totalDumpLines);
             }
 
             using var fs1 = new FileStream(index1Path, FileMode.Create, FileAccess.Write, FileShare.None);
             using var bw1 = new BinaryWriter(fs1, Encoding.UTF8, false);
             bw1.Write(new byte[] { (byte)'I', (byte)'D', (byte)'X', (byte)'1' });
-            bw1.Write((ushort)FormatVersion);
+            bw1.Write(CurrentFormatVersion);
             bw1.Write((ushort)0);
             bw1.Write((uint)0);
         }
