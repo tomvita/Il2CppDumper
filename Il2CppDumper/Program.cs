@@ -268,6 +268,18 @@ namespace Il2CppDumper
             {
                 Console.WriteLine($"WARN: Failed to build RVA indexes: {e.Message}");
             }
+            try
+            {
+                var dumpPath = Path.Combine(outputDir, "dump.cs");
+                var definitionCachePath = Path.Combine(outputDir, "dumpcs_definition_cache.txt");
+                var namespaceOffsetsPath = Path.Combine(outputDir, "dumpcs_namespace_offsets.bin");
+                var typeIndexPath = Path.Combine(outputDir, "dumpcs_type_index.bin");
+                DumpCsCacheBuilder.Build(dumpPath, definitionCachePath, namespaceOffsetsPath, typeIndexPath);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"WARN: Failed to build dump.cs cache files: {e.Message}");
+            }
             Console.WriteLine("Done!");
             if (config.GenerateStruct)
             {
