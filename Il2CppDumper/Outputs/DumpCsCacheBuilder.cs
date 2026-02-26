@@ -37,9 +37,7 @@ namespace Il2CppDumper
                 throw new FileNotFoundException("dump.cs not found", dumpPath);
             }
 
-            var fileInfo = new FileInfo(dumpPath);
-            var dumpSize = (ulong)fileInfo.Length;
-            var dumpMtime = (ulong)new DateTimeOffset(fileInfo.LastWriteTimeUtc).ToUnixTimeSeconds();
+            var (dumpSize, dumpMtime) = GetDumpSignature(dumpPath);
 
             var definitionOffsets = new Dictionary<string, List<ulong>>(StringComparer.Ordinal);
             var namespaceOffsets = new List<uint>();
@@ -61,6 +59,26 @@ namespace Il2CppDumper
             WriteDefinitionCache(definitionCachePath, dumpSize, dumpMtime, definitionOffsets);
             WriteNamespaceOffsets(namespaceOffsetsPath, dumpSize, dumpMtime, namespaceOffsets);
             WriteTypeIndex(typeIndexPath, dumpSize, dumpMtime, typeInfos);
+            StampOutputsToDumpMtime(dumpPath, dumpMtime, definitionCachePath, namespaceOffsetsPath, typeIndexPath);
+        }
+
+        private static (ulong DumpSize, ulong DumpMtime) GetDumpSignature(string dumpPath)
+        {
+            var fileInfo = new FileInfo(dumpPath);
+            return ((ulong)fileInfo.Length, (ulong)new DateTimeOffset(fileInfo.LastWriteTimeUtc).ToUnixTimeSeconds());
+        }
+
+        private static void StampOutputsToDumpMtime(string dumpPath, ulong dumpMtime, params string[] outputPaths)
+        {
+            var ts = DateTimeOffset.FromUnixTimeSeconds((long)dumpMtime).UtcDateTime;
+            File.SetLastWriteTimeUtc(dumpPath, ts);
+            foreach (var outputPath in outputPaths)
+            {
+                if (File.Exists(outputPath))
+                {
+                    File.SetLastWriteTimeUtc(outputPath, ts);
+                }
+            }
         }
 
         private static void ScanDumpFile(
