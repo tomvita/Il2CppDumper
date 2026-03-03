@@ -2596,6 +2596,25 @@ void WaitForUserOnExit(bool hadError) {
         consoleUpdate(nullptr);
     }
 }
+
+void ConfigureReturnToBreeze() {
+    static const std::vector<fs::path> candidates = {
+        "sdmc:/switch/Breeze/Breeze.nro",
+        "sdmc:/switch/Breeze.nro",
+    };
+
+    std::error_code ec;
+    for (const auto& p : candidates) {
+        if (!fs::exists(p, ec) || !fs::is_regular_file(p, ec)) {
+            ec.clear();
+            continue;
+        }
+        envSetNextLoad(p.string().c_str(), p.string().c_str());
+        AppendRunLog("next load set to Breeze: " + p.string());
+        return;
+    }
+    AppendRunLog("Breeze not found; keeping default return target.");
+}
 #endif
 
 int Run(int argc, char** argv) {
@@ -2806,6 +2825,7 @@ int main(int argc, char** argv) {
 #ifdef __SWITCH__
         AppendRunLog("rc=" + std::to_string(rc));
         WaitForUserOnExit(rc != 0);
+        ConfigureReturnToBreeze();
         consoleExit(nullptr);
 #endif
         return rc;
@@ -2814,6 +2834,7 @@ int main(int argc, char** argv) {
 #ifdef __SWITCH__
         AppendRunLog(std::string("fatal exception: ") + ex.what());
         WaitForUserOnExit(true);
+        ConfigureReturnToBreeze();
         consoleExit(nullptr);
 #endif
         return 1;
