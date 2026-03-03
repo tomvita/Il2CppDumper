@@ -60,6 +60,16 @@ namespace Il2CppDumper
             WriteNamespaceOffsets(namespaceOffsetsPath, dumpSize, dumpMtime, namespaceOffsets);
             WriteTypeIndex(typeIndexPath, dumpSize, dumpMtime, typeInfos);
             StampOutputsToDumpMtime(dumpPath, dumpMtime, definitionCachePath, namespaceOffsetsPath, typeIndexPath);
+
+            // Reconcile with the final on-disk dump.cs signature in case the filesystem adjusted the timestamp.
+            var (finalDumpSize, finalDumpMtime) = GetDumpSignature(dumpPath);
+            if (finalDumpSize != dumpSize || finalDumpMtime != dumpMtime)
+            {
+                WriteDefinitionCache(definitionCachePath, finalDumpSize, finalDumpMtime, definitionOffsets);
+                WriteNamespaceOffsets(namespaceOffsetsPath, finalDumpSize, finalDumpMtime, namespaceOffsets);
+                WriteTypeIndex(typeIndexPath, finalDumpSize, finalDumpMtime, typeInfos);
+                StampOutputsToDumpMtime(dumpPath, finalDumpMtime, definitionCachePath, namespaceOffsetsPath, typeIndexPath);
+            }
         }
 
         private static (ulong DumpSize, ulong DumpMtime) GetDumpSignature(string dumpPath)

@@ -361,3 +361,7 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+Switch/build_switch/
+Switch/switch_il2cpp_metadata.map
+Switch/switch_il2cpp_metadata.elf
+Switch/switch_il2cpp_metadata.nro
