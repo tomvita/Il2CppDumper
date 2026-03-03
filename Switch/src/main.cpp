@@ -24,6 +24,7 @@
 
 #include "SwitchPort/ElfImage.h"
 #include "SwitchPort/MetadataFile.h"
+#include "SwitchPort/Nx2ElfLite.h"
 #include "SwitchPort/RegistrationFinder.h"
 #include "SwitchPort/RuntimeTypeSystem.h"
 
@@ -2474,6 +2475,9 @@ void AppendRunLog(const std::string& line) {
     }
 }
 
+void PrintInfo(const std::string& line);
+void PrintError(const std::string& line);
+
 fs::path PreferSiblingMainElf(const fs::path& il2cppPath) {
     if (il2cppPath.filename() == "main.elf") {
         return il2cppPath;
@@ -2482,6 +2486,17 @@ fs::path PreferSiblingMainElf(const fs::path& il2cppPath) {
     std::error_code ec;
     if (fs::exists(siblingMainElf, ec) && fs::is_regular_file(siblingMainElf, ec)) {
         return siblingMainElf;
+    }
+
+    if (il2cppPath.filename() == "main") {
+        std::string convertError;
+        if (SwitchPort::ConvertNsoLikeToElf(il2cppPath.string(), siblingMainElf.string(), &convertError)) {
+            AppendRunLog("auto-converted main -> main.elf: " + siblingMainElf.string());
+            PrintInfo("Converted main to ELF: " + siblingMainElf.string());
+            return siblingMainElf;
+        }
+        AppendRunLog("main -> main.elf conversion failed: " + convertError);
+        PrintError("main.elf not found and conversion failed: " + convertError);
     }
     return il2cppPath;
 }
@@ -2498,7 +2513,11 @@ void PrintInfo(const std::string& line) {
 }
 
 void PrintError(const std::string& line) {
+#ifdef __SWITCH__
+    std::fprintf(stdout, "%s\n", line.c_str());
+#else
     std::fprintf(stderr, "%s\n", line.c_str());
+#endif
     RefreshConsole();
 }
 
@@ -2561,19 +2580,17 @@ void DumpProgressBridge(const char* phase, size_t done, size_t total, void* user
 
 #ifdef __SWITCH__
 void WaitForUserOnExit(bool hadError) {
-    if (hadError) {
-        PrintError("");
-        PrintError("Run failed.");
-    } else {
-        PrintInfo("");
-        PrintInfo("Run completed successfully.");
+    if (!hadError) {
+        return;
     }
     PrintError("");
-    PrintError("Press A/B/+ to exit. (MINUS aborts during run)");
+    PrintError("Run failed.");
+    PrintError("");
+    PrintError("Press any key to continue. (MINUS aborts during run)");
     while (appletMainLoop()) {
         hidScanInput();
         const u64 kDown = hidKeysDown(CONTROLLER_P1_AUTO);
-        if (kDown & (KEY_A | KEY_B | KEY_PLUS)) {
+        if (kDown != 0) {
             break;
         }
         consoleUpdate(nullptr);

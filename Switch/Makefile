@@ -33,7 +33,8 @@ LOCAL_INCLUDE += -I$(PORTLIBS_INCLUDEDIR)
 endif
 
 CPPFILES := $(foreach dir,$(SOURCES),$(wildcard $(dir)/*.cpp))
-OFILES := $(patsubst %.cpp,$(BUILD)/%.o,$(CPPFILES))
+CFILES := $(foreach dir,$(SOURCES),$(wildcard $(dir)/*.c))
+OFILES := $(patsubst %.cpp,$(BUILD)/%.o,$(CPPFILES)) $(patsubst %.c,$(BUILD)/%.o,$(CFILES))
 
 NRO := $(TARGET).nro
 ELF := $(TARGET).elf
@@ -63,6 +64,11 @@ $(BUILD)/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	@echo "  CXX     $<"
 	@$(CXX) $(CXXFLAGS) $(LOCAL_INCLUDE) -MMD -MP -c $< -o $@
+
+$(BUILD)/%.o: %.c
+	@mkdir -p $(dir $@)
+	@echo "  CC      $<"
+	@$(CC) $(CFLAGS) $(LOCAL_INCLUDE) -MMD -MP -c $< -o $@
 
 run: $(NRO)
 	@echo "Copy $(NRO) to /switch/$(TARGET)/$(NRO) on SD card."
