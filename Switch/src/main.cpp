@@ -2296,6 +2296,81 @@ bool IsMetadataFile(const fs::path& path) {
     return magic.has_value() && (*magic == 0xFAB11BAFu);
 }
 
+std::string TrimAscii(const std::string& value) {
+    size_t begin = 0;
+    while (begin < value.size() && std::isspace(static_cast<unsigned char>(value[begin])) != 0) {
+        ++begin;
+    }
+    size_t end = value.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
+        --end;
+    }
+    return value.substr(begin, end - begin);
+}
+
+std::optional<uint64_t> ReadBreezeSaveApplicationId() {
+    const fs::path configPath = "sdmc:/switch/breeze/config.ini";
+    std::ifstream in(configPath);
+    if (!in) {
+        return std::nullopt;
+    }
+
+    bool inNxSection = false;
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t commentPos = line.find_first_of(";#");
+        if (commentPos != std::string::npos) {
+            line.resize(commentPos);
+        }
+        const std::string trimmed = TrimAscii(line);
+        if (trimmed.empty()) {
+            continue;
+        }
+
+        if (trimmed.front() == '[' && trimmed.back() == ']') {
+            const std::string section = TrimAscii(trimmed.substr(1, trimmed.size() - 2));
+            inNxSection = (section == "Nx");
+            continue;
+        }
+        if (!inNxSection) {
+            continue;
+        }
+
+        const size_t eqPos = trimmed.find('=');
+        if (eqPos == std::string::npos) {
+            continue;
+        }
+        const std::string key = TrimAscii(trimmed.substr(0, eqPos));
+        if (key != "save_application_id") {
+            continue;
+        }
+
+        std::string value = TrimAscii(trimmed.substr(eqPos + 1));
+        if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
+            value = value.substr(1, value.size() - 2);
+        }
+        if (value.rfind("0x", 0) == 0 || value.rfind("0X", 0) == 0) {
+            value = value.substr(2);
+        }
+        if (value.empty() || value.size() > 16) {
+            return std::nullopt;
+        }
+        for (const char c : value) {
+            if (std::isxdigit(static_cast<unsigned char>(c)) == 0) {
+                return std::nullopt;
+            }
+        }
+
+        try {
+            return static_cast<uint64_t>(std::stoull(value, nullptr, 16));
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+
+    return std::nullopt;
+}
+
 bool DirectoryHasMainAndMetadata(const fs::path& dir, fs::path* mainPath, fs::path* metadataPath) {
     const fs::path candidateMainElf = dir / "main.elf";
     const fs::path candidateMain = dir / "main";
@@ -2426,6 +2501,15 @@ bool FindExtractedPairRecursively(const fs::path& root, int maxDepth, fs::path* 
 }
 
 bool AutoDetectNxdumptoolExtractedFiles(fs::path* mainPath, fs::path* metadataPath) {
+    if (const auto titleId = ReadBreezeSaveApplicationId(); titleId.has_value()) {
+        char titleIdDirName[17] = {};
+        std::snprintf(titleIdDirName, sizeof(titleIdDirName), "%016llX", static_cast<unsigned long long>(*titleId));
+        const fs::path breezeCheatDir = fs::path("sdmc:/switch/breeze/cheats") / titleIdDirName;
+        if (DirectoryHasMainAndMetadata(breezeCheatDir, mainPath, metadataPath)) {
+            return true;
+        }
+    }
+    return false;
     const std::vector<fs::path> knownRoots = {
         "sdmc:/switch/Breezehelper/extracted",
         "sdmc:/switch/nxdumptool/extracted",
@@ -2632,7 +2716,7 @@ int Run(int argc, char** argv) {
     if (argc < 1 || argc > 4) {
         AppendRunLog("invalid argc");
         PrintError("Usage:");
-        PrintError("  switch_il2cpp_metadata  (auto-detects sdmc:/switch/*/extracted/<titleid>/main + global-metadata.dat)");
+        PrintError("  switch_il2cpp_metadata  (auto-detects sdmc:/switch/breeze/cheats/<titleid>/main + global-metadata.dat)");
         PrintError("  switch_il2cpp_metadata <global-metadata.dat> [dump.cs output]");
         PrintError("  switch_il2cpp_metadata <il2cpp-binary> <global-metadata.dat> [dump.cs output]");
         return 2;
@@ -2648,8 +2732,9 @@ int Run(int argc, char** argv) {
         fs::path autoMetadata;
         if (!AutoDetectNxdumptoolExtractedFiles(&autoMain, &autoMetadata)) {
             AppendRunLog("auto-detect failed");
-            PrintError("Failed to auto-detect nxdumptool extracted files.");
-            PrintError("Expected paths like: sdmc:/switch/<app>/extracted/<titleid>/main + global-metadata.dat");
+            PrintError("Failed to auto-detect input files.");
+            PrintError("Expected path: sdmc:/switch/breeze/cheats/<titleid>/main + global-metadata.dat");
+            PrintError("Title ID is read from [Nx] save_application_id in sdmc:/switch/breeze/config.ini");
             return 1;
         }
         il2cppPath = autoMain;
@@ -2690,6 +2775,7 @@ int Run(int argc, char** argv) {
     uint64_t metadataRegistration = 0;
     bool pointerInExec = false;
     if (fullMode) {
+        try {
         const auto elfLoadStart = std::chrono::steady_clock::now();
         progress.Emit("load il2cpp elf", 0, 0, true);
         il2cppPath = PreferSiblingMainElf(il2cppPath);
@@ -2719,6 +2805,12 @@ il2cpp_loaded:
         PrintInfo("Loaded IL2CPP ELF (native mode): " + il2cppPath.string());
         PrintInfo("PT_LOAD segments: " + std::to_string(elfImage->LoadSegmentCount()));
         PrintInfo("ELF load time: " + std::to_string(MillisecondsSince(elfLoadStart)) + " ms");
+        } catch (const std::bad_alloc&) {
+            AppendRunLog("out of memory while loading IL2CPP ELF");
+            PrintError("Out of memory while loading IL2CPP ELF.");
+            PrintError("This is usually caused by low Switch applet memory or malformed converted main/main.elf.");
+            return 1;
+        }
     }
 
     const auto metadataLoadStart = std::chrono::steady_clock::now();

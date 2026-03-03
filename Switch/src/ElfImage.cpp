@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <fstream>
+#include <limits>
+#include <new>
 #include <string>
 
 namespace SwitchPort {
@@ -22,6 +24,8 @@ constexpr uint32_t kR_X86_64_64 = 1;
 constexpr uint32_t kR_X86_64_RELATIVE = 8;
 constexpr uint32_t kR_AARCH64_ABS64 = 257;
 constexpr uint32_t kR_AARCH64_RELATIVE = 1027;
+constexpr uint64_t kMaxElfFileBytes = 1024ull * 1024ull * 1024ull; // 1 GiB hard cap for malformed inputs.
+constexpr uint32_t kMaxDynamicSymbolCount = 4u * 1024u * 1024u;
 
 uint16_t ReadLe16(const uint8_t* p) {
     return static_cast<uint16_t>(p[0]) | static_cast<uint16_t>(p[1] << 8);
@@ -47,23 +51,56 @@ void WriteLe64(uint8_t* p, uint64_t v) {
     p[7] = static_cast<uint8_t>((v >> 56) & 0xff);
 }
 
-bool ReadFile(const std::string& path, std::vector<uint8_t>* out) {
+bool AddOverflowU64(uint64_t a, uint64_t b, uint64_t* out) {
+    if (a > std::numeric_limits<uint64_t>::max() - b) {
+        return true;
+    }
+    *out = a + b;
+    return false;
+}
+
+bool ReadFile(const std::string& path, std::vector<uint8_t>* out, std::string* error) {
     std::ifstream in(path, std::ios::binary);
     if (!in) {
+        if (error != nullptr) {
+            *error = "Failed to open ELF file: " + path;
+        }
         return false;
     }
     in.seekg(0, std::ios::end);
     const std::streamoff size = in.tellg();
     if (size < 0) {
+        if (error != nullptr) {
+            *error = "Failed to query ELF file size: " + path;
+        }
+        return false;
+    }
+    if (static_cast<uint64_t>(size) > kMaxElfFileBytes) {
+        if (error != nullptr) {
+            *error = "ELF file is too large: " + std::to_string(static_cast<unsigned long long>(size)) + " bytes";
+        }
         return false;
     }
     in.seekg(0, std::ios::beg);
-    out->resize(static_cast<size_t>(size));
+    try {
+        out->resize(static_cast<size_t>(size));
+    } catch (const std::bad_alloc&) {
+        if (error != nullptr) {
+            *error = "Out of memory while reading ELF file";
+        }
+        return false;
+    }
     if (size == 0) {
         return true;
     }
     in.read(reinterpret_cast<char*>(out->data()), size);
-    return in.good();
+    if (!in.good()) {
+        if (error != nullptr) {
+            *error = "Failed to read ELF file contents: " + path;
+        }
+        return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -74,12 +111,10 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
     is64Bit_ = false;
     isLittleEndian_ = false;
 
-    if (!ReadFile(path, &data_)) {
-        if (error) {
-            *error = "Failed to read ELF file: " + path;
+    try {
+        if (!ReadFile(path, &data_, error)) {
+            return false;
         }
-        return false;
-    }
     if (data_.size() < 64) {
         if (error) {
             *error = "ELF file is too small";
@@ -120,8 +155,9 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
         return false;
     }
 
-    const uint64_t phTableEnd = e_phoff + static_cast<uint64_t>(e_phentsize) * e_phnum;
-    if (phTableEnd > data_.size()) {
+    const uint64_t phBytes = static_cast<uint64_t>(e_phentsize) * e_phnum;
+    uint64_t phTableEnd = 0;
+    if (AddOverflowU64(e_phoff, phBytes, &phTableEnd) || phTableEnd > data_.size()) {
         if (error) {
             *error = "ELF program header table out of bounds";
         }
@@ -148,7 +184,8 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
         seg.filesz = ReadLe64(ph + 32);
         seg.memsz = ReadLe64(ph + 40);
         seg.flags = ReadLe32(ph + 4);
-        if (seg.fileOffset + seg.filesz > data_.size()) {
+        uint64_t segEnd = 0;
+        if (AddOverflowU64(seg.fileOffset, seg.filesz, &segEnd) || segEnd > data_.size()) {
             if (error) {
                 *error = "ELF PT_LOAD segment out of file bounds";
             }
@@ -164,10 +201,11 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
         return false;
     }
 
-    if (dynamicSize >= 16 && dynamicOffset + dynamicSize <= data_.size()) {
+    uint64_t dynamicEnd = 0;
+    if (dynamicSize >= 16 && !AddOverflowU64(dynamicOffset, dynamicSize, &dynamicEnd) && dynamicEnd <= data_.size()) {
         uint64_t relaVa = 0;
         uint64_t relaSz = 0;
-        for (uint64_t off = dynamicOffset; off + 16 <= dynamicOffset + dynamicSize; off += 16) {
+        for (uint64_t off = dynamicOffset; off + 16 <= dynamicEnd; off += 16) {
             const int64_t tag = static_cast<int64_t>(ReadLe64(data_.data() + off));
             const uint64_t value = ReadLe64(data_.data() + off + 8);
             if (tag == kDtNull) {
@@ -184,7 +222,7 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
             uint64_t symtabVa = 0;
             uint64_t hashVa = 0;
             uint64_t gnuHashVa = 0;
-            for (uint64_t off = dynamicOffset; off + 16 <= dynamicOffset + dynamicSize; off += 16) {
+            for (uint64_t off = dynamicOffset; off + 16 <= dynamicEnd; off += 16) {
                 const int64_t tag = static_cast<int64_t>(ReadLe64(data_.data() + off));
                 const uint64_t value = ReadLe64(data_.data() + off + 8);
                 if (tag == kDtNull) {
@@ -238,10 +276,20 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
                     }
                 }
                 if (symbolCount > 0) {
+                    if (symbolCount > kMaxDynamicSymbolCount) {
+                        if (error != nullptr) {
+                            *error = "ELF dynamic symbol count is unreasonable: " +
+                                     std::to_string(static_cast<unsigned long long>(symbolCount));
+                        }
+                        return false;
+                    }
                     uint64_t symtabOff = 0;
                     if (TryMapVaddrToOffset(symtabVa, &symtabOff)) {
                         constexpr uint64_t kSymEntSize = 24;
-                        if (symtabOff + kSymEntSize * symbolCount <= data_.size()) {
+                        uint64_t symBytes = 0;
+                        uint64_t symEnd = 0;
+                        if (!AddOverflowU64(0, kSymEntSize * static_cast<uint64_t>(symbolCount), &symBytes) &&
+                            !AddOverflowU64(symtabOff, symBytes, &symEnd) && symEnd <= data_.size()) {
                             symbolValues.resize(symbolCount);
                             for (uint32_t i = 0; i < symbolCount; ++i) {
                                 const uint64_t symOff = symtabOff + kSymEntSize * i;
@@ -253,8 +301,10 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
             }
 
             uint64_t relaOff = 0;
-            if (TryMapVaddrToOffset(relaVa, &relaOff) && relaOff + relaSz <= data_.size()) {
-                for (uint64_t off = relaOff; off + 24 <= relaOff + relaSz; off += 24) {
+            uint64_t relaEnd = 0;
+            if (TryMapVaddrToOffset(relaVa, &relaOff) && !AddOverflowU64(relaOff, relaSz, &relaEnd) &&
+                relaEnd <= data_.size()) {
+                for (uint64_t off = relaOff; off + 24 <= relaEnd; off += 24) {
                     const uint64_t r_offset = ReadLe64(data_.data() + off);
                     const uint64_t r_info = ReadLe64(data_.data() + off + 8);
                     const uint64_t r_addend = ReadLe64(data_.data() + off + 16);
@@ -295,6 +345,12 @@ bool ElfImage::Load(const std::string& path, std::string* error) {
     }
 
     return true;
+    } catch (const std::bad_alloc&) {
+        if (error != nullptr) {
+            *error = "Out of memory while parsing ELF (possibly malformed)";
+        }
+        return false;
+    }
 }
 
 bool ElfImage::TryMapVaddrToOffset(uint64_t vaddr, uint64_t* outOffset) const {
