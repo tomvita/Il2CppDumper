@@ -80,8 +80,8 @@ namespace Il2CppDumper
                 Assemblies.Add(assemblyDefinition);
                 var moduleDefinition = assemblyDefinition.MainModule;
                 moduleDefinition.Types.Clear();//清除自动创建的<Module>类
-                var typeEnd = imageDef.typeStart + imageDef.typeCount;
-                for (var index = imageDef.typeStart; index < typeEnd; ++index)
+                var typeEnd = (int)imageDef.typeStart + (int)imageDef.typeCount;
+                for (var index = (int)imageDef.typeStart; index < typeEnd; ++index)
                 {
                     var typeDef = metadata.typeDefs[index];
                     var namespaceName = metadata.GetStringFromIndex(typeDef.namespaceIndex);
@@ -96,8 +96,8 @@ namespace Il2CppDumper
             }
             foreach (var imageDef in metadata.imageDefs)
             {
-                var typeEnd = imageDef.typeStart + imageDef.typeCount;
-                for (var index = imageDef.typeStart; index < typeEnd; ++index)
+                var typeEnd = (int)imageDef.typeStart + (int)imageDef.typeCount;
+                for (var index = (int)imageDef.typeStart; index < typeEnd; ++index)
                 {
                     var typeDef = metadata.typeDefs[index];
                     var typeDefinition = typeDefinitionDic[typeDef];
@@ -115,8 +115,8 @@ namespace Il2CppDumper
             //提前处理
             foreach (var imageDef in metadata.imageDefs)
             {
-                var typeEnd = imageDef.typeStart + imageDef.typeCount;
-                for (var index = imageDef.typeStart; index < typeEnd; ++index)
+                var typeEnd = (int)imageDef.typeStart + (int)imageDef.typeCount;
+                for (var index = (int)imageDef.typeStart; index < typeEnd; ++index)
                 {
                     var typeDef = metadata.typeDefs[index];
                     var typeDefinition = typeDefinitionDic[typeDef];
@@ -152,7 +152,13 @@ namespace Il2CppDumper
                     //interfaces
                     for (int i = 0; i < typeDef.interfaces_count; i++)
                     {
-                        var interfaceType = il2Cpp.types[metadata.interfaceIndices[typeDef.interfacesStart + i]];
+                        var idx = typeDef.interfacesStart + i;
+                        if (idx < 0 || idx >= metadata.interfaceIndices.Length)
+                            continue;
+                        var typeIdx = metadata.interfaceIndices[idx];
+                        if (typeIdx < 0 || typeIdx >= il2Cpp.types.Length)
+                            continue;
+                        var interfaceType = il2Cpp.types[typeIdx];
                         var interfaceTypeRef = GetTypeReference(typeDefinition, interfaceType);
                         typeDefinition.Interfaces.Add(new InterfaceImplementation(interfaceTypeRef));
                     }
@@ -383,7 +389,9 @@ namespace Il2CppDumper
                 }
             }
             //第三遍，添加CustomAttribute
-            if (il2Cpp.Version > 20)
+            // Skip custom attribute restoration for v38+ as the blob format changes
+            // cause serialization failures in Mono.Cecil
+            if (il2Cpp.Version > 20 && il2Cpp.Version < 38)
             {
                 foreach (var imageDef in metadata.imageDefs)
                 {
@@ -594,7 +602,7 @@ namespace Il2CppDumper
                     {
                         var startRange = metadata.attributeDataRanges[attributeIndex];
                         var endRange = metadata.attributeDataRanges[attributeIndex + 1];
-                        metadata.Position = metadata.header.attributeDataOffset + startRange.startOffset;
+                        metadata.Position = metadata.GetAttributeDataOffset() + startRange.startOffset;
                         var buff = metadata.ReadBytes((int)(endRange.startOffset - startRange.startOffset));
                         var reader = new CustomAttributeDataReader(executor, buff);
                         if (reader.Count != 0)
@@ -663,7 +671,7 @@ namespace Il2CppDumper
                 genericParameterDic.Add(param, genericParameter);
                 for (int i = 0; i < param.constraintsCount; ++i)
                 {
-                    var il2CppType = il2Cpp.types[metadata.constraintIndices[param.constraintsStart + i]];
+                    var il2CppType = il2Cpp.types[metadata.constraintIndices[param.constraintsStart + i].index];
                     genericParameter.Constraints.Add(new GenericParameterConstraint(GetTypeReference((MemberReference)iGenericParameterProvider, il2CppType)));
                 }
             }

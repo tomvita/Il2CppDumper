@@ -575,7 +575,7 @@ std::string FormatFieldDefaultValue(const SwitchPort::MetadataFile& metadata, co
         return true;
     };
 
-    const uint32_t abs = metadata.Header().fieldAndParameterDefaultValueDataOffset + static_cast<uint32_t>(fdv.dataIndex);
+    const uint32_t abs = metadata.GetFieldAndParameterDefaultValueDataOffset() + static_cast<uint32_t>(fdv.dataIndex);
     const auto* rt = runtimeTypes ? runtimeTypes->GetTypeByIndex(fdv.typeIndex) : nullptr;
     const uint8_t type = rt ? rt->type : 0;
     if (type == kIl2CppTypeBoolean) {
@@ -984,11 +984,11 @@ std::vector<std::string> GetCustomAttributesForToken(const SwitchPort::MetadataF
         return out;
     }
     const uint32_t startOff = ranges[hit].startOffset;
-    const uint32_t endOff = (hit + 1 < ranges.size()) ? ranges[hit + 1].startOffset : static_cast<uint32_t>(header.attributeDataSize);
+    const uint32_t endOff = (hit + 1 < ranges.size()) ? ranges[hit + 1].startOffset : static_cast<uint32_t>(metadata.GetAttributeDataSize());
     if (endOff <= startOff) {
         return out;
     }
-    const uint32_t abs = header.attributeDataOffset + startOff;
+    const uint32_t abs = metadata.GetAttributeDataOffset() + startOff;
     uint32_t count = 0;
     uint32_t countBytes = 0;
     if (!ReadCompressedUInt32At(metadata, abs, &count, &countBytes)) {

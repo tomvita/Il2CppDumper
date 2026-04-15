@@ -72,6 +72,10 @@ bool MetadataFile::Load(const std::string& path, std::string* error) {
     fieldDefaultValues_.clear();
     parameterDefaultValues_.clear();
     header_ = {};
+    typeIndexSize_ = 4;
+    typeDefinitionIndexSize_ = 4;
+    genericContainerIndexSize_ = 4;
+    parameterIndexSize_ = 4;
 
     if (!ReadFile(path, &data_)) {
         SetError(error, "Failed to read file: " + path);
@@ -144,102 +148,203 @@ bool MetadataFile::ParseHeader(std::string* error) {
         }
 
         const int32_t version = reader.ReadI32();
-        if (version < 16 || version > 31) {
+        if (version < 16 || version > 39) {
             SetError(error, "Unsupported metadata version: " + std::to_string(version));
             return false;
         }
         header_.version = version;
 
-        (void)reader.ReadU32(); // stringLiteralOffset
-        (void)reader.ReadI32(); // stringLiteralSize
-        (void)reader.ReadU32(); // stringLiteralDataOffset
-        (void)reader.ReadI32(); // stringLiteralDataSize
+        if (version >= 38) {
+            // v38+ uses Il2CppSectionMetadata triplets (offset/size/count)
+            auto readSection = [&reader]() -> Il2CppSectionMetadata {
+                Il2CppSectionMetadata s;
+                s.offset = reader.ReadU32();
+                s.size = reader.ReadU32();
+                s.count = reader.ReadU32();
+                return s;
+            };
 
-        header_.stringOffset = reader.ReadU32();
-        header_.stringSize = reader.ReadI32();
+            header_.sec_stringLiterals = readSection();
+            header_.sec_stringLiteralData = readSection();
+            header_.sec_strings = readSection();
+            header_.sec_events = readSection();
+            header_.sec_properties = readSection();
+            header_.sec_methods = readSection();
+            header_.sec_parameterDefaultValues = readSection();
+            header_.sec_fieldDefaultValues = readSection();
+            header_.sec_fieldAndParameterDefaultValueData = readSection();
+            header_.sec_fieldMarshaledSizes = readSection();
+            header_.sec_parameters = readSection();
+            header_.sec_fields = readSection();
+            header_.sec_genericParameters = readSection();
+            header_.sec_genericParameterConstraints = readSection();
+            header_.sec_genericContainers = readSection();
+            header_.sec_nestedTypes = readSection();
+            header_.sec_interfaces = readSection();
+            header_.sec_vtableMethods = readSection();
+            header_.sec_interfaceOffsets = readSection();
+            header_.sec_typeDefinitions = readSection();
+            header_.sec_images = readSection();
+            header_.sec_assemblies = readSection();
+            header_.sec_fieldRefs = readSection();
+            header_.sec_referencedAssemblies = readSection();
+            header_.sec_attributeData = readSection();
+            header_.sec_attributeDataRanges = readSection();
+            header_.sec_unresolvedIndirectCallParameterTypes = readSection();
+            header_.sec_unresolvedIndirectCallParameterRanges = readSection();
+            header_.sec_windowsRuntimeTypeNames = readSection();
+            header_.sec_windowsRuntimeStrings = readSection();
+            header_.sec_exportedTypeDefinitions = readSection();
 
-        header_.eventsOffset = reader.ReadU32();
-        header_.eventsSize = reader.ReadI32();
-        header_.propertiesOffset = reader.ReadU32();
-        header_.propertiesSize = reader.ReadI32();
-        header_.methodsOffset = reader.ReadU32();
-        header_.methodsSize = reader.ReadI32();
-        header_.parameterDefaultValuesOffset = reader.ReadU32();
-        header_.parameterDefaultValuesSize = reader.ReadI32();
-        header_.fieldDefaultValuesOffset = reader.ReadU32();
-        header_.fieldDefaultValuesSize = reader.ReadI32();
-        header_.fieldAndParameterDefaultValueDataOffset = reader.ReadU32();
-        header_.fieldAndParameterDefaultValueDataSize = reader.ReadI32();
-        (void)reader.ReadI32(); // fieldMarshaledSizesOffset
-        (void)reader.ReadI32(); // fieldMarshaledSizesSize
-        header_.parametersOffset = reader.ReadU32();
-        header_.parametersSize = reader.ReadI32();
-        header_.fieldsOffset = reader.ReadU32();
-        header_.fieldsSize = reader.ReadI32();
-        header_.genericParametersOffset = reader.ReadU32();
-        header_.genericParametersSize = reader.ReadI32();
-        (void)reader.ReadU32(); // genericParameterConstraintsOffset
-        (void)reader.ReadI32(); // genericParameterConstraintsSize
-        header_.genericContainersOffset = reader.ReadU32();
-        header_.genericContainersSize = reader.ReadI32();
-        header_.nestedTypesOffset = reader.ReadU32();
-        header_.nestedTypesSize = reader.ReadI32();
-        header_.interfacesOffset = reader.ReadU32();
-        header_.interfacesSize = reader.ReadI32();
-        (void)reader.ReadU32(); // vtableMethodsOffset
-        (void)reader.ReadI32(); // vtableMethodsSize
-        (void)reader.ReadI32(); // interfaceOffsetsOffset
-        (void)reader.ReadI32(); // interfaceOffsetsSize
+            // Map section metadata to legacy header fields for unified access
+            header_.stringOffset = header_.sec_strings.offset;
+            header_.stringSize = static_cast<int32_t>(header_.sec_strings.size);
+            header_.eventsOffset = header_.sec_events.offset;
+            header_.eventsSize = static_cast<int32_t>(header_.sec_events.size);
+            header_.propertiesOffset = header_.sec_properties.offset;
+            header_.propertiesSize = static_cast<int32_t>(header_.sec_properties.size);
+            header_.methodsOffset = header_.sec_methods.offset;
+            header_.methodsSize = static_cast<int32_t>(header_.sec_methods.size);
+            header_.parameterDefaultValuesOffset = header_.sec_parameterDefaultValues.offset;
+            header_.parameterDefaultValuesSize = static_cast<int32_t>(header_.sec_parameterDefaultValues.size);
+            header_.fieldDefaultValuesOffset = header_.sec_fieldDefaultValues.offset;
+            header_.fieldDefaultValuesSize = static_cast<int32_t>(header_.sec_fieldDefaultValues.size);
+            header_.fieldAndParameterDefaultValueDataOffset = header_.sec_fieldAndParameterDefaultValueData.offset;
+            header_.fieldAndParameterDefaultValueDataSize = static_cast<int32_t>(header_.sec_fieldAndParameterDefaultValueData.size);
+            header_.parametersOffset = header_.sec_parameters.offset;
+            header_.parametersSize = static_cast<int32_t>(header_.sec_parameters.size);
+            header_.fieldsOffset = header_.sec_fields.offset;
+            header_.fieldsSize = static_cast<int32_t>(header_.sec_fields.size);
+            header_.genericParametersOffset = header_.sec_genericParameters.offset;
+            header_.genericParametersSize = static_cast<int32_t>(header_.sec_genericParameters.size);
+            header_.genericContainersOffset = header_.sec_genericContainers.offset;
+            header_.genericContainersSize = static_cast<int32_t>(header_.sec_genericContainers.size);
+            header_.nestedTypesOffset = header_.sec_nestedTypes.offset;
+            header_.nestedTypesSize = static_cast<int32_t>(header_.sec_nestedTypes.size);
+            header_.interfacesOffset = header_.sec_interfaces.offset;
+            header_.interfacesSize = static_cast<int32_t>(header_.sec_interfaces.size);
+            header_.typeDefinitionsOffset = header_.sec_typeDefinitions.offset;
+            header_.typeDefinitionsSize = static_cast<int32_t>(header_.sec_typeDefinitions.size);
+            header_.imagesOffset = header_.sec_images.offset;
+            header_.imagesSize = static_cast<int32_t>(header_.sec_images.size);
+            header_.attributeDataOffset = header_.sec_attributeData.offset;
+            header_.attributeDataSize = static_cast<int32_t>(header_.sec_attributeData.size);
+            header_.attributeDataRangeOffset = header_.sec_attributeDataRanges.offset;
+            header_.attributeDataRangeSize = static_cast<int32_t>(header_.sec_attributeDataRanges.size);
 
-        header_.typeDefinitionsOffset = reader.ReadU32();
-        header_.typeDefinitionsSize = reader.ReadI32();
+            // Compute variable-width index sizes
+            if (header_.sec_parameters.count > 0) {
+                typeIndexSize_ = static_cast<int>(header_.sec_parameters.size / header_.sec_parameters.count) - 8;
+                if (typeIndexSize_ < 1) typeIndexSize_ = 1;
+                if (typeIndexSize_ > 4) typeIndexSize_ = 4;
+            } else {
+                typeIndexSize_ = 4;
+            }
+            typeDefinitionIndexSize_ = GetIndexSize(static_cast<int>(header_.sec_typeDefinitions.count));
+            genericContainerIndexSize_ = GetIndexSize(static_cast<int>(header_.sec_genericContainers.count));
+            parameterIndexSize_ = GetIndexSize(static_cast<int>(header_.sec_parameters.count));
+        } else {
+            // Pre-v38 header layout with offset/size pairs
+            typeIndexSize_ = 4;
+            typeDefinitionIndexSize_ = 4;
+            genericContainerIndexSize_ = 4;
+            parameterIndexSize_ = 4;
 
-        if (header_.version <= 24) {
-            (void)reader.ReadU32(); // rgctxEntriesOffset
-            (void)reader.ReadI32(); // rgctxEntriesCount
-        }
+            (void)reader.ReadU32(); // stringLiteralOffset
+            (void)reader.ReadI32(); // stringLiteralSize
+            (void)reader.ReadU32(); // stringLiteralDataOffset
+            (void)reader.ReadI32(); // stringLiteralDataSize
 
-        header_.imagesOffset = reader.ReadU32();
-        header_.imagesSize = reader.ReadI32();
+            header_.stringOffset = reader.ReadU32();
+            header_.stringSize = reader.ReadI32();
 
-        (void)reader.ReadU32(); // assembliesOffset
-        (void)reader.ReadI32(); // assembliesSize
+            header_.eventsOffset = reader.ReadU32();
+            header_.eventsSize = reader.ReadI32();
+            header_.propertiesOffset = reader.ReadU32();
+            header_.propertiesSize = reader.ReadI32();
+            header_.methodsOffset = reader.ReadU32();
+            header_.methodsSize = reader.ReadI32();
+            header_.parameterDefaultValuesOffset = reader.ReadU32();
+            header_.parameterDefaultValuesSize = reader.ReadI32();
+            header_.fieldDefaultValuesOffset = reader.ReadU32();
+            header_.fieldDefaultValuesSize = reader.ReadI32();
+            header_.fieldAndParameterDefaultValueDataOffset = reader.ReadU32();
+            header_.fieldAndParameterDefaultValueDataSize = reader.ReadI32();
+            (void)reader.ReadI32(); // fieldMarshaledSizesOffset
+            (void)reader.ReadI32(); // fieldMarshaledSizesSize
+            header_.parametersOffset = reader.ReadU32();
+            header_.parametersSize = reader.ReadI32();
+            header_.fieldsOffset = reader.ReadU32();
+            header_.fieldsSize = reader.ReadI32();
+            header_.genericParametersOffset = reader.ReadU32();
+            header_.genericParametersSize = reader.ReadI32();
+            (void)reader.ReadU32(); // genericParameterConstraintsOffset
+            (void)reader.ReadI32(); // genericParameterConstraintsSize
+            header_.genericContainersOffset = reader.ReadU32();
+            header_.genericContainersSize = reader.ReadI32();
+            header_.nestedTypesOffset = reader.ReadU32();
+            header_.nestedTypesSize = reader.ReadI32();
+            header_.interfacesOffset = reader.ReadU32();
+            header_.interfacesSize = reader.ReadI32();
+            (void)reader.ReadU32(); // vtableMethodsOffset
+            (void)reader.ReadI32(); // vtableMethodsSize
+            (void)reader.ReadI32(); // interfaceOffsetsOffset
+            (void)reader.ReadI32(); // interfaceOffsetsSize
 
-        if (header_.version >= 29) {
-            (void)reader.ReadU32(); // fieldRefsOffset
-            (void)reader.ReadI32(); // fieldRefsSize
-            (void)reader.ReadI32(); // referencedAssembliesOffset
-            (void)reader.ReadI32(); // referencedAssembliesSize
-            header_.attributeDataOffset = reader.ReadU32();
-            header_.attributeDataSize = reader.ReadI32();
-            header_.attributeDataRangeOffset = reader.ReadU32();
-            header_.attributeDataRangeSize = reader.ReadI32();
+            header_.typeDefinitionsOffset = reader.ReadU32();
+            header_.typeDefinitionsSize = reader.ReadI32();
+
+            if (header_.version <= 24) {
+                (void)reader.ReadU32(); // rgctxEntriesOffset
+                (void)reader.ReadI32(); // rgctxEntriesCount
+            }
+
+            header_.imagesOffset = reader.ReadU32();
+            header_.imagesSize = reader.ReadI32();
+
+            (void)reader.ReadU32(); // assembliesOffset
+            (void)reader.ReadI32(); // assembliesSize
+
+            if (header_.version >= 29) {
+                (void)reader.ReadU32(); // fieldRefsOffset
+                (void)reader.ReadI32(); // fieldRefsSize
+                (void)reader.ReadI32(); // referencedAssembliesOffset
+                (void)reader.ReadI32(); // referencedAssembliesSize
+                header_.attributeDataOffset = reader.ReadU32();
+                header_.attributeDataSize = reader.ReadI32();
+                header_.attributeDataRangeOffset = reader.ReadU32();
+                header_.attributeDataRangeSize = reader.ReadI32();
+            }
         }
 
         if (!ValidateArrayBounds(header_.stringOffset, header_.stringSize, 1, error, "string table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.imagesOffset, header_.imagesSize, GetImageDefinitionSize(header_.version), error,
+        if (!ValidateArrayBounds(header_.imagesOffset, header_.imagesSize, GetImageDefinitionSize(header_.version, typeDefinitionIndexSize_), error,
                                  "image table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.typeDefinitionsOffset, header_.typeDefinitionsSize, GetTypeDefinitionSize(header_.version),
+        if (!ValidateArrayBounds(header_.typeDefinitionsOffset, header_.typeDefinitionsSize,
+                                 GetTypeDefinitionSize(header_.version, genericContainerIndexSize_, typeIndexSize_),
                                  error, "type table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.methodsOffset, header_.methodsSize, GetMethodDefinitionSize(header_.version), error,
-                                 "method table", data_.size())) {
+        if (!ValidateArrayBounds(header_.methodsOffset, header_.methodsSize,
+                                 GetMethodDefinitionSize(header_.version, typeIndexSize_, genericContainerIndexSize_, parameterIndexSize_, typeDefinitionIndexSize_),
+                                 error, "method table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.fieldsOffset, header_.fieldsSize, GetFieldDefinitionSize(header_.version), error,
-                                 "field table", data_.size())) {
+        if (!ValidateArrayBounds(header_.fieldsOffset, header_.fieldsSize,
+                                 GetFieldDefinitionSize(header_.version, typeIndexSize_),
+                                 error, "field table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.parametersOffset, header_.parametersSize, GetParameterDefinitionSize(header_.version),
+        if (!ValidateArrayBounds(header_.parametersOffset, header_.parametersSize,
+                                 GetParameterDefinitionSize(header_.version, typeIndexSize_),
                                  error, "parameter table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.genericParametersOffset, header_.genericParametersSize, GetGenericParameterSize(), error,
+        if (!ValidateArrayBounds(header_.genericParametersOffset, header_.genericParametersSize, GetGenericParameterSize(header_.version, genericContainerIndexSize_), error,
                                  "generic parameter table", data_.size())) {
             return false;
         }
@@ -247,20 +352,22 @@ bool MetadataFile::ParseHeader(std::string* error) {
                                  "generic container table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.nestedTypesOffset, header_.nestedTypesSize, 4, error, "nested type index table",
+        if (!ValidateArrayBounds(header_.nestedTypesOffset, header_.nestedTypesSize,
+                                 4, error, "nested type index table",
                                  data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.interfacesOffset, header_.interfacesSize, 4, error, "interface index table",
+        if (!ValidateArrayBounds(header_.interfacesOffset, header_.interfacesSize,
+                                 static_cast<size_t>(typeIndexSize_), error, "interface index table",
                                  data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.fieldDefaultValuesOffset, header_.fieldDefaultValuesSize, GetFieldDefaultValueSize(),
+        if (!ValidateArrayBounds(header_.fieldDefaultValuesOffset, header_.fieldDefaultValuesSize, GetFieldDefaultValueSize(header_.version, typeIndexSize_),
                                  error, "field default value table", data_.size())) {
             return false;
         }
         if (!ValidateArrayBounds(header_.parameterDefaultValuesOffset, header_.parameterDefaultValuesSize,
-                                 GetParameterDefaultValueSize(), error, "parameter default value table", data_.size())) {
+                                 GetParameterDefaultValueSize(header_.version, typeIndexSize_, parameterIndexSize_), error, "parameter default value table", data_.size())) {
             return false;
         }
         if (!ValidateArrayBounds(header_.fieldAndParameterDefaultValueDataOffset, header_.fieldAndParameterDefaultValueDataSize, 1,
@@ -271,7 +378,7 @@ bool MetadataFile::ParseHeader(std::string* error) {
                                  error, "property table", data_.size())) {
             return false;
         }
-        if (!ValidateArrayBounds(header_.eventsOffset, header_.eventsSize, GetEventDefinitionSize(header_.version), error,
+        if (!ValidateArrayBounds(header_.eventsOffset, header_.eventsSize, GetEventDefinitionSize(header_.version, typeIndexSize_), error,
                                  "event table", data_.size())) {
             return false;
         }
@@ -296,18 +403,18 @@ bool MetadataFile::ParseHeader(std::string* error) {
 bool MetadataFile::ParseImages(std::string* error) {
     try {
         BinaryReader reader(data_, header_.imagesOffset);
-        const size_t imageCount = static_cast<size_t>(header_.imagesSize) / GetImageDefinitionSize(header_.version);
+        const size_t imageCount = static_cast<size_t>(header_.imagesSize) / GetImageDefinitionSize(header_.version, typeDefinitionIndexSize_);
 
         images_.reserve(imageCount);
         for (size_t i = 0; i < imageCount; ++i) {
             ImageDefinition image{};
             image.nameIndex = reader.ReadU32();
             image.assemblyIndex = reader.ReadI32();
-            image.typeStart = reader.ReadI32();
+            image.typeStart = reader.ReadIndexValue(typeDefinitionIndexSize_);
             image.typeCount = reader.ReadU32();
 
             if (header_.version >= 24) {
-                (void)reader.ReadI32(); // exportedTypeStart
+                (void)reader.ReadIndexValue(typeDefinitionIndexSize_); // exportedTypeStart (TypeDefinitionIndex)
                 (void)reader.ReadU32(); // exportedTypeCount
             }
 
@@ -333,7 +440,7 @@ bool MetadataFile::ParseImages(std::string* error) {
 bool MetadataFile::ParseTypes(std::string* error) {
     try {
         BinaryReader reader(data_, header_.typeDefinitionsOffset);
-        const size_t typeCount = static_cast<size_t>(header_.typeDefinitionsSize) / GetTypeDefinitionSize(header_.version);
+        const size_t typeCount = static_cast<size_t>(header_.typeDefinitionsSize) / GetTypeDefinitionSize(header_.version, genericContainerIndexSize_, typeIndexSize_);
 
         types_.reserve(typeCount);
         for (size_t i = 0; i < typeCount; ++i) {
@@ -344,21 +451,26 @@ bool MetadataFile::ParseTypes(std::string* error) {
             if (header_.version <= 24) {
                 (void)reader.ReadI32(); // customAttributeIndex
             }
-            (void)reader.ReadI32(); // byvalTypeIndex
+            (void)reader.ReadIndexValue(typeIndexSize_); // byvalTypeIndex (TypeIndex)
             if (header_.version <= 24.5) {
                 (void)reader.ReadI32(); // byrefTypeIndex
             }
 
-            type.declaringTypeIndex = reader.ReadI32();
-            type.parentIndex = reader.ReadI32();
-            type.elementTypeIndex = reader.ReadI32();
+            type.declaringTypeIndex = reader.ReadIndexValue(typeIndexSize_);
+            type.parentIndex = reader.ReadIndexValue(typeIndexSize_);
+            if (header_.version < 35) {
+                type.elementTypeIndex = reader.ReadI32();
+            } else {
+                // v35+ removed elementTypeIndex; for enums, use parentIndex as surrogate
+                type.elementTypeIndex = type.parentIndex;
+            }
 
             if (header_.version <= 24.1) {
                 (void)reader.ReadI32(); // rgctxStartIndex
                 (void)reader.ReadI32(); // rgctxCount
             }
 
-            type.genericContainerIndex = reader.ReadI32();
+            type.genericContainerIndex = reader.ReadIndexValue(genericContainerIndexSize_);
 
             if (header_.version <= 22) {
                 (void)reader.ReadI32(); // delegateWrapperFromManagedToNativeIndex
@@ -416,22 +528,23 @@ bool MetadataFile::ParseTypes(std::string* error) {
 bool MetadataFile::ParseMethods(std::string* error) {
     try {
         BinaryReader reader(data_, header_.methodsOffset);
-        const size_t methodCount = static_cast<size_t>(header_.methodsSize) / GetMethodDefinitionSize(header_.version);
+        const size_t methodCount = static_cast<size_t>(header_.methodsSize) / GetMethodDefinitionSize(header_.version, typeIndexSize_, genericContainerIndexSize_, parameterIndexSize_, typeDefinitionIndexSize_);
         methods_.reserve(methodCount);
 
         for (size_t i = 0; i < methodCount; ++i) {
             MethodDefinition method{};
             method.nameIndex = reader.ReadU32();
-            method.declaringType = reader.ReadI32();
-            method.returnType = reader.ReadI32();
+            method.declaringType = reader.ReadIndexValue(typeDefinitionIndexSize_);
+            method.returnType = reader.ReadIndexValue(typeIndexSize_);
             if (header_.version >= 31) {
                 (void)reader.ReadI32(); // returnParameterToken
             }
-            method.parameterStart = reader.ReadI32();
+            method.parameterStart = reader.ReadIndexValue(
+                (header_.version >= 39) ? parameterIndexSize_ : 4);
             if (header_.version <= 24) {
                 (void)reader.ReadI32(); // customAttributeIndex
             }
-            method.genericContainerIndex = reader.ReadI32();
+            method.genericContainerIndex = reader.ReadIndexValue(genericContainerIndexSize_);
             if (header_.version <= 24) {
                 (void)reader.ReadI32(); // methodIndex
                 (void)reader.ReadI32(); // invokerIndex
@@ -456,13 +569,13 @@ bool MetadataFile::ParseMethods(std::string* error) {
 bool MetadataFile::ParseFields(std::string* error) {
     try {
         BinaryReader reader(data_, header_.fieldsOffset);
-        const size_t fieldCount = static_cast<size_t>(header_.fieldsSize) / GetFieldDefinitionSize(header_.version);
+        const size_t fieldCount = static_cast<size_t>(header_.fieldsSize) / GetFieldDefinitionSize(header_.version, typeIndexSize_);
         fields_.reserve(fieldCount);
 
         for (size_t i = 0; i < fieldCount; ++i) {
             FieldDefinition field{};
             field.nameIndex = reader.ReadU32();
-            field.typeIndex = reader.ReadI32();
+            field.typeIndex = reader.ReadIndexValue(typeIndexSize_);
             if (header_.version <= 24) {
                 (void)reader.ReadI32(); // customAttributeIndex
             }
@@ -481,7 +594,7 @@ bool MetadataFile::ParseFields(std::string* error) {
 bool MetadataFile::ParseParameters(std::string* error) {
     try {
         BinaryReader reader(data_, header_.parametersOffset);
-        const size_t parameterCount = static_cast<size_t>(header_.parametersSize) / GetParameterDefinitionSize(header_.version);
+        const size_t parameterCount = static_cast<size_t>(header_.parametersSize) / GetParameterDefinitionSize(header_.version, typeIndexSize_);
         parameters_.reserve(parameterCount);
 
         for (size_t i = 0; i < parameterCount; ++i) {
@@ -491,7 +604,7 @@ bool MetadataFile::ParseParameters(std::string* error) {
             if (header_.version <= 24) {
                 (void)reader.ReadI32(); // customAttributeIndex
             }
-            parameter.typeIndex = reader.ReadI32();
+            parameter.typeIndex = reader.ReadIndexValue(typeIndexSize_);
             parameters_.push_back(parameter);
         }
     } catch (const std::exception& ex) {
@@ -504,11 +617,11 @@ bool MetadataFile::ParseParameters(std::string* error) {
 bool MetadataFile::ParseGenericParameters(std::string* error) {
     try {
         BinaryReader reader(data_, header_.genericParametersOffset);
-        const size_t count = static_cast<size_t>(header_.genericParametersSize) / GetGenericParameterSize();
+        const size_t count = static_cast<size_t>(header_.genericParametersSize) / GetGenericParameterSize(header_.version, genericContainerIndexSize_);
         genericParameters_.reserve(count);
         for (size_t i = 0; i < count; ++i) {
             GenericParameter gp{};
-            gp.ownerIndex = reader.ReadI32();
+            gp.ownerIndex = reader.ReadIndexValue(genericContainerIndexSize_);
             gp.nameIndex = reader.ReadU32();
             gp.constraintsStart = static_cast<int16_t>(reader.ReadU16());
             gp.constraintsCount = static_cast<int16_t>(reader.ReadU16());
@@ -546,6 +659,7 @@ bool MetadataFile::ParseGenericContainers(std::string* error) {
 bool MetadataFile::ParseNestedTypes(std::string* error) {
     try {
         BinaryReader reader(data_, header_.nestedTypesOffset);
+        // Nested type entries are always 4-byte int32 (not variable-width TypeDefinitionIndex)
         const size_t count = static_cast<size_t>(header_.nestedTypesSize) / 4;
         nestedTypeIndices_.reserve(count);
         for (size_t i = 0; i < count; ++i) {
@@ -561,10 +675,10 @@ bool MetadataFile::ParseNestedTypes(std::string* error) {
 bool MetadataFile::ParseInterfaces(std::string* error) {
     try {
         BinaryReader reader(data_, header_.interfacesOffset);
-        const size_t count = static_cast<size_t>(header_.interfacesSize) / 4;
+        const size_t count = static_cast<size_t>(header_.interfacesSize) / static_cast<size_t>(typeIndexSize_);
         interfaceIndices_.reserve(count);
         for (size_t i = 0; i < count; ++i) {
-            interfaceIndices_.push_back(reader.ReadI32());
+            interfaceIndices_.push_back(reader.ReadIndexValue(typeIndexSize_));
         }
     } catch (const std::exception& ex) {
         SetError(error, std::string("Failed to parse interface index table: ") + ex.what());
@@ -576,11 +690,11 @@ bool MetadataFile::ParseInterfaces(std::string* error) {
 bool MetadataFile::ParseFieldDefaultValues(std::string* error) {
     try {
         BinaryReader reader(data_, header_.fieldDefaultValuesOffset);
-        const size_t count = static_cast<size_t>(header_.fieldDefaultValuesSize) / GetFieldDefaultValueSize();
+        const size_t count = static_cast<size_t>(header_.fieldDefaultValuesSize) / GetFieldDefaultValueSize(header_.version, typeIndexSize_);
         for (size_t i = 0; i < count; ++i) {
             FieldDefaultValue value{};
             value.fieldIndex = reader.ReadI32();
-            value.typeIndex = reader.ReadI32();
+            value.typeIndex = reader.ReadIndexValue(typeIndexSize_);
             value.dataIndex = reader.ReadI32();
             fieldDefaultValues_[value.fieldIndex] = value;
         }
@@ -594,11 +708,11 @@ bool MetadataFile::ParseFieldDefaultValues(std::string* error) {
 bool MetadataFile::ParseParameterDefaultValues(std::string* error) {
     try {
         BinaryReader reader(data_, header_.parameterDefaultValuesOffset);
-        const size_t count = static_cast<size_t>(header_.parameterDefaultValuesSize) / GetParameterDefaultValueSize();
+        const size_t count = static_cast<size_t>(header_.parameterDefaultValuesSize) / GetParameterDefaultValueSize(header_.version, typeIndexSize_, parameterIndexSize_);
         for (size_t i = 0; i < count; ++i) {
             ParameterDefaultValue value{};
-            value.parameterIndex = reader.ReadI32();
-            value.typeIndex = reader.ReadI32();
+            value.parameterIndex = reader.ReadIndexValue(parameterIndexSize_);
+            value.typeIndex = reader.ReadIndexValue(typeIndexSize_);
             value.dataIndex = reader.ReadI32();
             parameterDefaultValues_[value.parameterIndex] = value;
         }
@@ -639,13 +753,13 @@ bool MetadataFile::ParseProperties(std::string* error) {
 bool MetadataFile::ParseEvents(std::string* error) {
     try {
         BinaryReader reader(data_, header_.eventsOffset);
-        const size_t eventCount = static_cast<size_t>(header_.eventsSize) / GetEventDefinitionSize(header_.version);
+        const size_t eventCount = static_cast<size_t>(header_.eventsSize) / GetEventDefinitionSize(header_.version, typeIndexSize_);
         events_.reserve(eventCount);
 
         for (size_t i = 0; i < eventCount; ++i) {
             EventDefinition eventDef{};
             eventDef.nameIndex = reader.ReadU32();
-            eventDef.typeIndex = reader.ReadI32();
+            eventDef.typeIndex = reader.ReadIndexValue(typeIndexSize_);
             eventDef.add = reader.ReadI32();
             eventDef.remove = reader.ReadI32();
             eventDef.raise = reader.ReadI32();

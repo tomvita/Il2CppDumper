@@ -14,6 +14,26 @@ public:
     bool Load(const std::string& path, std::string* error);
 
     const MetadataHeader& Header() const { return header_; }
+
+    // Variable-width index sizes (1, 2, or 4 bytes; always 4 for versions < 38)
+    int TypeIndexSize() const { return typeIndexSize_; }
+    int TypeDefinitionIndexSize() const { return typeDefinitionIndexSize_; }
+    int GenericContainerIndexSize() const { return genericContainerIndexSize_; }
+    int ParameterIndexSize() const { return parameterIndexSize_; }
+
+    // Accessors that return the correct offset/size regardless of header version
+    uint32_t GetFieldAndParameterDefaultValueDataOffset() const {
+        return (header_.version >= 38) ? header_.sec_fieldAndParameterDefaultValueData.offset
+                                       : header_.fieldAndParameterDefaultValueDataOffset;
+    }
+    uint32_t GetAttributeDataOffset() const {
+        return (header_.version >= 38) ? header_.sec_attributeData.offset : header_.attributeDataOffset;
+    }
+    int32_t GetAttributeDataSize() const {
+        return (header_.version >= 38) ? static_cast<int32_t>(header_.sec_attributeData.size)
+                                       : header_.attributeDataSize;
+    }
+
     const std::vector<ImageDefinition>& Images() const { return images_; }
     const std::vector<TypeDefinition>& Types() const { return types_; }
     const std::vector<MethodDefinition>& Methods() const { return methods_; }
@@ -64,6 +84,10 @@ private:
 
     std::vector<uint8_t> data_;
     MetadataHeader header_;
+    int typeIndexSize_ = 4;
+    int typeDefinitionIndexSize_ = 4;
+    int genericContainerIndexSize_ = 4;
+    int parameterIndexSize_ = 4;
     std::vector<ImageDefinition> images_;
     std::vector<TypeDefinition> types_;
     std::vector<MethodDefinition> methods_;

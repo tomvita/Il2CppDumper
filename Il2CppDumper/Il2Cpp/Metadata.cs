@@ -17,7 +17,7 @@ namespace Il2CppDumper
         public Il2CppParameterDefinition[] parameterDefs;
         public Il2CppFieldDefinition[] fieldDefs;
         private readonly Dictionary<int, Il2CppFieldDefaultValue> fieldDefaultValuesDic;
-        private readonly Dictionary<int, Il2CppParameterDefaultValue> parameterDefaultValuesDic;
+        private readonly Dictionary<ParameterIndex, Il2CppParameterDefaultValue> parameterDefaultValuesDic;
         public Il2CppPropertyDefinition[] propertyDefs;
         public Il2CppCustomAttributeTypeRange[] attributeTypeRanges;
         public Il2CppCustomAttributeDataRange[] attributeDataRanges;
@@ -27,6 +27,7 @@ namespace Il2CppDumper
         private readonly Il2CppMetadataUsagePair[] metadataUsagePairs;
         public int[] attributeTypes;
         public int[] interfaceIndices;
+        public Il2CppConstraintIndex[] constraintIndices;
         public Dictionary<Il2CppMetadataUsage, SortedDictionary<uint, uint>> metadataUsageDic;
         public long metadataUsagesCount;
         public int[] nestedTypeIndices;
@@ -34,11 +35,17 @@ namespace Il2CppDumper
         public Il2CppGenericContainer[] genericContainers;
         public Il2CppFieldRef[] fieldRefs;
         public Il2CppGenericParameter[] genericParameters;
-        public int[] constraintIndices;
         public uint[] vtableMethods;
         public Il2CppRGCTXDefinition[] rgctxEntries;
 
         private readonly Dictionary<uint, string> stringCache = new();
+
+        // Types with custom sizes
+        // Keep in sync with vm/MetadataDeserialization.h
+        public static int typeIndexSize;
+        public static int typeDefinitionIndexSize;
+        public static int genericContainerIndexSize;
+        public static int parameterIndexSize;
 
         public Metadata(Stream stream) : base(stream)
         {
@@ -52,7 +59,7 @@ namespace Il2CppDumper
             {
                 throw new InvalidDataException("ERROR: Metadata file supplied is not valid metadata file.");
             }
-            if (version < 16 || version > 31)
+            if (version < 16 || version > 39)
             {
                 throw new NotSupportedException($"ERROR: Metadata file supplied is not a supported version[{version}].");
             }
@@ -74,7 +81,38 @@ namespace Il2CppDumper
                     }
                 }
             }
-            imageDefs = ReadMetadataClassArray<Il2CppImageDefinition>(header.imagesOffset, header.imagesSize);
+
+            // Set custom sizes
+            if (Version >= 38)
+            {
+                // Current definition of Il2CppParameterDefinition has size 8 (not counting typeIndex);
+                // By computing the size of this as reported by the header, we can infer TypeIndex size
+                int sizeOfIl2CppParameterDefinition = (int)(header.parameters.size / header.parameters.count);
+                typeIndexSize = sizeOfIl2CppParameterDefinition - 8;
+                typeDefinitionIndexSize = GetIndexSize((int)header.typeDefinitions.count);
+                genericContainerIndexSize = GetIndexSize((int)header.genericContainers.count);
+                parameterIndexSize = GetIndexSize((int)header.parameters.count);
+#if DEBUG
+                Console.Error.WriteLine($"[DIAG] typeIndexSize={typeIndexSize} typeDefinitionIndexSize={typeDefinitionIndexSize} genericContainerIndexSize={genericContainerIndexSize} parameterIndexSize={parameterIndexSize}");
+                Console.Error.WriteLine($"[DIAG] parameters: offset={header.parameters.offset} size={header.parameters.size} count={header.parameters.count}");
+                Console.Error.WriteLine($"[DIAG] interfaces: offset={header.interfaces.offset} size={header.interfaces.size} count={header.interfaces.count}");
+                Console.Error.WriteLine($"[DIAG] nestedTypes: offset={header.nestedTypes.offset} size={header.nestedTypes.size} count={header.nestedTypes.count} bytesPerEntry={header.nestedTypes.size / header.nestedTypes.count}");
+                Console.Error.WriteLine($"[DIAG] vtableMethods: offset={header.vtableMethods.offset} size={header.vtableMethods.size} count={header.vtableMethods.count} bytesPerEntry={header.vtableMethods.size / header.vtableMethods.count}");
+                Console.Error.WriteLine($"[DIAG] typeDefinitions: offset={header.typeDefinitions.offset} size={header.typeDefinitions.size} count={header.typeDefinitions.count}");
+#endif
+            }
+            else
+            {
+                // Before version 38, these were always ints
+                typeIndexSize = 4;
+                typeDefinitionIndexSize = 4;
+                genericContainerIndexSize = 4;
+                parameterIndexSize = 4;
+            }
+
+            imageDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppImageDefinition>(header.imagesOffset, header.imagesSize)
+                : ReadMetadataClassArray<Il2CppImageDefinition>(header.images.offset, (int)header.images.size);
             if (Version == 24.2 && header.assembliesSize / 68 < imageDefs.Length)
             {
                 Version = 24.4;
@@ -88,31 +126,93 @@ namespace Il2CppDumper
             {
                 Version = 24.4;
             }
-            assemblyDefs = ReadMetadataClassArray<Il2CppAssemblyDefinition>(header.assembliesOffset, header.assembliesSize);
+            assemblyDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppAssemblyDefinition>(header.assembliesOffset, header.assembliesSize)
+                : ReadMetadataClassArray<Il2CppAssemblyDefinition>(header.assemblies.offset, (int)header.assemblies.size);
             if (v241Plus)
             {
                 Version = 24.1;
             }
-            typeDefs = ReadMetadataClassArray<Il2CppTypeDefinition>(header.typeDefinitionsOffset, header.typeDefinitionsSize);
-            methodDefs = ReadMetadataClassArray<Il2CppMethodDefinition>(header.methodsOffset, header.methodsSize);
-            parameterDefs = ReadMetadataClassArray<Il2CppParameterDefinition>(header.parametersOffset, header.parametersSize);
-            fieldDefs = ReadMetadataClassArray<Il2CppFieldDefinition>(header.fieldsOffset, header.fieldsSize);
-            var fieldDefaultValues = ReadMetadataClassArray<Il2CppFieldDefaultValue>(header.fieldDefaultValuesOffset, header.fieldDefaultValuesSize);
-            var parameterDefaultValues = ReadMetadataClassArray<Il2CppParameterDefaultValue>(header.parameterDefaultValuesOffset, header.parameterDefaultValuesSize);
+            typeDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppTypeDefinition>(header.typeDefinitionsOffset, header.typeDefinitionsSize)
+                : ReadMetadataClassArray<Il2CppTypeDefinition>(header.typeDefinitions.offset, (int)header.typeDefinitions.size);
+            methodDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppMethodDefinition>(header.methodsOffset, header.methodsSize)
+                : ReadMetadataClassArray<Il2CppMethodDefinition>(header.methods.offset, (int)header.methods.size);
+            parameterDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppParameterDefinition>(header.parametersOffset, header.parametersSize)
+                : ReadMetadataClassArray<Il2CppParameterDefinition>(header.parameters.offset, (int)header.parameters.size);
+            fieldDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppFieldDefinition>(header.fieldsOffset, header.fieldsSize)
+                : ReadMetadataClassArray<Il2CppFieldDefinition>(header.fields.offset, (int)header.fields.size);
+            var fieldDefaultValues = Version < 38
+                ? ReadMetadataClassArray<Il2CppFieldDefaultValue>(header.fieldDefaultValuesOffset, header.fieldDefaultValuesSize)
+                : ReadMetadataClassArray<Il2CppFieldDefaultValue>(header.fieldDefaultValues.offset, (int)header.fieldDefaultValues.size);
+            var parameterDefaultValues = Version < 38
+                ? ReadMetadataClassArray<Il2CppParameterDefaultValue>(header.parameterDefaultValuesOffset, header.parameterDefaultValuesSize)
+                : ReadMetadataClassArray<Il2CppParameterDefaultValue>(header.parameterDefaultValues.offset, (int)header.parameterDefaultValues.size);
             fieldDefaultValuesDic = fieldDefaultValues.ToDictionary(x => x.fieldIndex);
             parameterDefaultValuesDic = parameterDefaultValues.ToDictionary(x => x.parameterIndex);
-            propertyDefs = ReadMetadataClassArray<Il2CppPropertyDefinition>(header.propertiesOffset, header.propertiesSize);
-            interfaceIndices = ReadClassArray<int>(header.interfacesOffset, header.interfacesSize / 4);
-            nestedTypeIndices = ReadClassArray<int>(header.nestedTypesOffset, header.nestedTypesSize / 4);
-            eventDefs = ReadMetadataClassArray<Il2CppEventDefinition>(header.eventsOffset, header.eventsSize);
-            genericContainers = ReadMetadataClassArray<Il2CppGenericContainer>(header.genericContainersOffset, header.genericContainersSize);
-            genericParameters = ReadMetadataClassArray<Il2CppGenericParameter>(header.genericParametersOffset, header.genericParametersSize);
-            constraintIndices = ReadClassArray<int>(header.genericParameterConstraintsOffset, header.genericParameterConstraintsSize / 4);
-            vtableMethods = ReadClassArray<uint>(header.vtableMethodsOffset, header.vtableMethodsSize / 4);
-            stringLiterals = ReadMetadataClassArray<Il2CppStringLiteral>(header.stringLiteralOffset, header.stringLiteralSize);
+            propertyDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppPropertyDefinition>(header.propertiesOffset, header.propertiesSize)
+                : ReadMetadataClassArray<Il2CppPropertyDefinition>(header.properties.offset, (int)header.properties.size);
+            if (Version < 38)
+            {
+                interfaceIndices = ReadClassArray<int>(header.interfacesOffset, header.interfacesSize / 4);
+            }
+            else
+            {
+                // v38+: interfaces section uses variable-width TypeIndex, read using count
+                Position = header.interfaces.offset;
+                interfaceIndices = new int[header.interfaces.count];
+                for (int i = 0; i < (int)header.interfaces.count; i++)
+                {
+                    interfaceIndices[i] = ReadTypeIndex();
+                }
+#if DEBUG
+                Console.Error.WriteLine($"[DIAG] interfaceIndices.Length={interfaceIndices.Length}");
+                Console.Error.WriteLine($"[DIAG] First 20 interfaceIndices: {string.Join(", ", interfaceIndices.Take(20))}");
+                for (int di = 0; di < Math.Min(10, typeDefs.Length); di++)
+                {
+                    var td = typeDefs[di];
+                    if (td.interfaces_count > 0)
+                    {
+                        Console.Error.WriteLine($"[DIAG] typeDef[{di}]: interfacesStart={td.interfacesStart} interfaces_count={td.interfaces_count} name={GetStringFromIndex(td.nameIndex)}");
+                    }
+                }
+#endif
+            }
+            if (Version < 38)
+            {
+                nestedTypeIndices = ReadClassArray<int>(header.nestedTypesOffset, header.nestedTypesSize / 4);
+            }
+            else
+            {
+                nestedTypeIndices = ReadClassArray<int>(header.nestedTypes.offset, header.nestedTypes.size / 4);
+            }
+            eventDefs = Version < 38
+                ? ReadMetadataClassArray<Il2CppEventDefinition>(header.eventsOffset, header.eventsSize)
+                : ReadMetadataClassArray<Il2CppEventDefinition>(header.events.offset, (int)header.events.size);
+            genericContainers = Version < 38
+                ? ReadMetadataClassArray<Il2CppGenericContainer>(header.genericContainersOffset, header.genericContainersSize)
+                : ReadMetadataClassArray<Il2CppGenericContainer>(header.genericContainers.offset, (int)header.genericContainers.size);
+            genericParameters = Version < 38
+                ? ReadMetadataClassArray<Il2CppGenericParameter>(header.genericParametersOffset, header.genericParametersSize)
+                : ReadMetadataClassArray<Il2CppGenericParameter>(header.genericParameters.offset, (int)header.genericParameters.size);
+            constraintIndices = Version < 38
+                ? ReadMetadataClassArray<Il2CppConstraintIndex>(header.genericParameterConstraintsOffset, header.genericParameterConstraintsSize)
+                : ReadMetadataClassArray<Il2CppConstraintIndex>(header.genericParameterConstraints.offset, (int)header.genericParameterConstraints.size);
+            vtableMethods = Version < 38
+                ? ReadClassArray<uint>(header.vtableMethodsOffset, header.vtableMethodsSize / 4)
+                : ReadClassArray<uint>(header.vtableMethods.offset, header.vtableMethods.size / 4);
+            stringLiterals = Version < 38
+                ? ReadMetadataClassArray<Il2CppStringLiteral>(header.stringLiteralOffset, header.stringLiteralSize)
+                : ReadMetadataClassArray<Il2CppStringLiteral>(header.stringLiterals.offset, (int)header.stringLiterals.size);
             if (Version > 16)
             {
-                fieldRefs = ReadMetadataClassArray<Il2CppFieldRef>(header.fieldRefsOffset, header.fieldRefsSize);
+                fieldRefs = Version < 38
+                    ? ReadMetadataClassArray<Il2CppFieldRef>(header.fieldRefsOffset, header.fieldRefsSize)
+                    : ReadMetadataClassArray<Il2CppFieldRef>(header.fieldRefs.offset, (int)header.fieldRefs.size);
                 if (Version < 27)
                 {
                     metadataUsageLists = ReadMetadataClassArray<Il2CppMetadataUsageList>(header.metadataUsageListsOffset, header.metadataUsageListsCount);
@@ -128,7 +228,9 @@ namespace Il2CppDumper
             }
             if (Version >= 29)
             {
-                attributeDataRanges = ReadMetadataClassArray<Il2CppCustomAttributeDataRange>(header.attributeDataRangeOffset, header.attributeDataRangeSize);
+                attributeDataRanges = Version < 38
+                    ? ReadMetadataClassArray<Il2CppCustomAttributeDataRange>(header.attributeDataRangeOffset, header.attributeDataRangeSize)
+                    : ReadMetadataClassArray<Il2CppCustomAttributeDataRange>(header.attributeDataRanges.offset, (int)header.attributeDataRanges.size);
             }
             if (Version > 24)
             {
@@ -157,6 +259,13 @@ namespace Il2CppDumper
             }
         }
 
+        public static int GetIndexSize(int count)
+        {
+            if (count <= 0xFF) return 1;
+            if (count <= 0xFFFF) return 2;
+            return 4;
+        }
+
         private T[] ReadMetadataClassArray<T>(uint addr, int count) where T : new()
         {
             return ReadClassArray<T>(addr, count / SizeOf(typeof(T)));
@@ -169,19 +278,19 @@ namespace Il2CppDumper
 
         public bool GetParameterDefaultValueFromIndex(int index, out Il2CppParameterDefaultValue value)
         {
-            return parameterDefaultValuesDic.TryGetValue(index, out value);
+            return parameterDefaultValuesDic.TryGetValue(new ParameterIndex(index), out value);
         }
 
         public uint GetDefaultValueFromIndex(int index)
         {
-            return (uint)(header.fieldAndParameterDefaultValueDataOffset + index);
+            return (uint)((Version < 38 ? header.fieldAndParameterDefaultValueDataOffset : header.fieldAndParameterDefaultValueData.offset) + index);
         }
 
         public string GetStringFromIndex(uint index)
         {
             if (!stringCache.TryGetValue(index, out var result))
             {
-                result = ReadStringToNull(header.stringOffset + index);
+                result = ReadStringToNull((Version < 38 ? header.stringOffset : header.strings.offset) + index);
                 stringCache.Add(index, result);
             }
             return result;
@@ -209,8 +318,44 @@ namespace Il2CppDumper
         public string GetStringLiteralFromIndex(uint index)
         {
             var stringLiteral = stringLiterals[index];
-            Position = (uint)(header.stringLiteralDataOffset + stringLiteral.dataIndex);
-            return Encoding.UTF8.GetString(ReadBytes((int)stringLiteral.length));
+            if (Version <= 31)
+            {
+                // Pre-v35: length is stored directly
+                Position = (uint)((Version < 38 ? header.stringLiteralDataOffset : header.stringLiteralData.offset) + stringLiteral.dataIndex);
+                return Encoding.UTF8.GetString(ReadBytes((int)stringLiteral.length));
+            }
+            else
+            {
+                // v35+: length is computed from adjacent entries
+                int stringLength;
+                if (index < stringLiterals.Length - 1)
+                {
+                    var nextLiteral = stringLiterals[index + 1];
+                    stringLength = nextLiteral.dataIndex - stringLiteral.dataIndex;
+                }
+                else
+                {
+                    // Last string, read to end of section
+                    stringLength = (Version < 38 ? header.stringLiteralDataSize : (int)header.stringLiteralData.size) - stringLiteral.dataIndex;
+                }
+                Position = (uint)((Version < 38 ? header.stringLiteralDataOffset : header.stringLiteralData.offset) + stringLiteral.dataIndex);
+                return Encoding.UTF8.GetString(ReadBytes(stringLength));
+            }
+        }
+
+        public uint GetAttributeDataOffset()
+        {
+            return Version < 38 ? header.attributeDataOffset : header.attributeData.offset;
+        }
+
+        public uint GetTypeDefinitionsOffset()
+        {
+            return Version < 38 ? header.typeDefinitionsOffset : header.typeDefinitions.offset;
+        }
+
+        public uint GetGenericParametersOffset()
+        {
+            return Version < 38 ? header.genericParametersOffset : header.genericParameters.offset;
         }
 
         private void ProcessingMetadataUsage()
@@ -278,6 +423,22 @@ namespace Il2CppDumper
                 {
                     var arrayLengthAttribute = i.GetCustomAttribute<ArrayLengthAttribute>();
                     size += arrayLengthAttribute.Length;
+                }
+                else if (fieldType == typeof(TypeIndex))
+                {
+                    size += typeIndexSize;
+                }
+                else if (fieldType == typeof(TypeDefinitionIndex))
+                {
+                    size += typeDefinitionIndexSize;
+                }
+                else if (fieldType == typeof(GenericContainerIndex))
+                {
+                    size += genericContainerIndexSize;
+                }
+                else if (fieldType == typeof(ParameterIndex))
+                {
+                    size += parameterIndexSize;
                 }
                 else
                 {

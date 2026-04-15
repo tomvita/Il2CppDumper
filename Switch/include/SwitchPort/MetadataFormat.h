@@ -8,6 +8,12 @@ namespace SwitchPort {
 
 constexpr uint32_t kMetadataMagic = 0xFAB11BAF;
 
+struct Il2CppSectionMetadata {
+    uint32_t offset = 0;
+    uint32_t size = 0;
+    uint32_t count = 0;
+};
+
 struct MetadataHeader {
     int version = 0;
 
@@ -58,6 +64,39 @@ struct MetadataHeader {
     int32_t attributeDataSize = 0;
     uint32_t attributeDataRangeOffset = 0;
     int32_t attributeDataRangeSize = 0;
+
+    // v38+ section metadata (offset/size/count triplets)
+    Il2CppSectionMetadata sec_stringLiterals;
+    Il2CppSectionMetadata sec_stringLiteralData;
+    Il2CppSectionMetadata sec_strings;
+    Il2CppSectionMetadata sec_events;
+    Il2CppSectionMetadata sec_properties;
+    Il2CppSectionMetadata sec_methods;
+    Il2CppSectionMetadata sec_parameterDefaultValues;
+    Il2CppSectionMetadata sec_fieldDefaultValues;
+    Il2CppSectionMetadata sec_fieldAndParameterDefaultValueData;
+    Il2CppSectionMetadata sec_fieldMarshaledSizes;
+    Il2CppSectionMetadata sec_parameters;
+    Il2CppSectionMetadata sec_fields;
+    Il2CppSectionMetadata sec_genericParameters;
+    Il2CppSectionMetadata sec_genericParameterConstraints;
+    Il2CppSectionMetadata sec_genericContainers;
+    Il2CppSectionMetadata sec_nestedTypes;
+    Il2CppSectionMetadata sec_interfaces;
+    Il2CppSectionMetadata sec_vtableMethods;
+    Il2CppSectionMetadata sec_interfaceOffsets;
+    Il2CppSectionMetadata sec_typeDefinitions;
+    Il2CppSectionMetadata sec_images;
+    Il2CppSectionMetadata sec_assemblies;
+    Il2CppSectionMetadata sec_fieldRefs;
+    Il2CppSectionMetadata sec_referencedAssemblies;
+    Il2CppSectionMetadata sec_attributeData;
+    Il2CppSectionMetadata sec_attributeDataRanges;
+    Il2CppSectionMetadata sec_unresolvedIndirectCallParameterTypes;
+    Il2CppSectionMetadata sec_unresolvedIndirectCallParameterRanges;
+    Il2CppSectionMetadata sec_windowsRuntimeTypeNames;
+    Il2CppSectionMetadata sec_windowsRuntimeStrings;
+    Il2CppSectionMetadata sec_exportedTypeDefinitions;
 };
 
 struct ImageDefinition {
@@ -177,14 +216,20 @@ struct GenericParameter {
     uint16_t flags = 0;
 };
 
-inline size_t GetImageDefinitionSize(double version) {
+inline int GetIndexSize(int count) {
+    if (count <= 0xFF) return 1;
+    if (count <= 0xFFFF) return 2;
+    return 4;
+}
+
+inline size_t GetImageDefinitionSize(double version, int typeDefinitionIndexSize = 4) {
     size_t size = 0;
     size += 4; // nameIndex
     size += 4; // assemblyIndex
-    size += 4; // typeStart
+    size += (version >= 38.0) ? static_cast<size_t>(typeDefinitionIndexSize) : 4; // typeStart (TypeDefinitionIndex)
     size += 4; // typeCount
     if (version >= 24.0) {
-        size += 4; // exportedTypeStart
+        size += (version >= 38.0) ? static_cast<size_t>(typeDefinitionIndexSize) : 4; // exportedTypeStart (TypeDefinitionIndex)
         size += 4; // exportedTypeCount
     }
     size += 4; // entryPointIndex
@@ -198,25 +243,27 @@ inline size_t GetImageDefinitionSize(double version) {
     return size;
 }
 
-inline size_t GetTypeDefinitionSize(double version) {
+inline size_t GetTypeDefinitionSize(double version, int genericContainerIndexSize = 4, int typeIndexSize = 4) {
     size_t size = 0;
     size += 4; // nameIndex
     size += 4; // namespaceIndex
     if (version <= 24.0) {
         size += 4; // customAttributeIndex
     }
-    size += 4; // byvalTypeIndex
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // byvalTypeIndex (TypeIndex)
     if (version <= 24.5) {
         size += 4; // byrefTypeIndex
     }
-    size += 4; // declaringTypeIndex
-    size += 4; // parentIndex
-    size += 4; // elementTypeIndex
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // declaringTypeIndex (TypeIndex)
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // parentIndex (TypeIndex)
+    if (version < 35.0) {
+        size += 4; // elementTypeIndex (removed in v35)
+    }
     if (version <= 24.1) {
         size += 4; // rgctxStartIndex
         size += 4; // rgctxCount
     }
-    size += 4; // genericContainerIndex
+    size += (version >= 38.0) ? static_cast<size_t>(genericContainerIndexSize) : 4; // genericContainerIndex
     if (version <= 22.0) {
         size += 4; // delegateWrapperFromManagedToNativeIndex
         size += 4; // marshalingFunctionsIndex
@@ -235,19 +282,19 @@ inline size_t GetTypeDefinitionSize(double version) {
     return size;
 }
 
-inline size_t GetMethodDefinitionSize(double version) {
+inline size_t GetMethodDefinitionSize(double version, int typeIndexSize = 4, int genericContainerIndexSize = 4, int parameterIndexSize = 4, int typeDefinitionIndexSize = 4) {
     size_t size = 0;
     size += 4; // nameIndex
-    size += 4; // declaringType
-    size += 4; // returnType
+    size += (version >= 38.0) ? static_cast<size_t>(typeDefinitionIndexSize) : 4; // declaringType (TypeDefinitionIndex)
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // returnType (TypeIndex)
     if (version >= 31.0) {
         size += 4; // returnParameterToken
     }
-    size += 4; // parameterStart
+    size += (version >= 39.0) ? static_cast<size_t>(parameterIndexSize) : 4; // parameterStart (ParameterIndex in v39+)
     if (version <= 24.0) {
         size += 4; // customAttributeIndex
     }
-    size += 4; // genericContainerIndex
+    size += (version >= 38.0) ? static_cast<size_t>(genericContainerIndexSize) : 4; // genericContainerIndex
     if (version <= 24.1) {
         size += 4; // methodIndex
         size += 4; // invokerIndex
@@ -263,21 +310,21 @@ inline size_t GetMethodDefinitionSize(double version) {
     return size;
 }
 
-inline size_t GetParameterDefinitionSize(double version) {
+inline size_t GetParameterDefinitionSize(double version, int typeIndexSize = 4) {
     size_t size = 0;
     size += 4; // nameIndex
     size += 4; // token
     if (version <= 24.0) {
         size += 4; // customAttributeIndex
     }
-    size += 4; // typeIndex
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // typeIndex (TypeIndex)
     return size;
 }
 
-inline size_t GetFieldDefinitionSize(double version) {
+inline size_t GetFieldDefinitionSize(double version, int typeIndexSize = 4) {
     size_t size = 0;
     size += 4; // nameIndex
-    size += 4; // typeIndex
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // typeIndex (TypeIndex)
     if (version <= 24.0) {
         size += 4; // customAttributeIndex
     }
@@ -291,20 +338,35 @@ inline size_t GetGenericContainerSize() {
     return 16;
 }
 
-inline size_t GetGenericParameterSize() {
-    return 16;
+inline size_t GetGenericParameterSize(double version = 0, int genericContainerIndexSize = 4) {
+    size_t size = 0;
+    size += (version >= 38.0) ? static_cast<size_t>(genericContainerIndexSize) : 4; // ownerIndex (GenericContainerIndex)
+    size += 4; // nameIndex
+    size += 2; // constraintsStart
+    size += 2; // constraintsCount
+    size += 2; // num
+    size += 2; // flags
+    return size;
 }
 
 inline size_t GetCustomAttributeDataRangeSize() {
     return 8;
 }
 
-inline size_t GetFieldDefaultValueSize() {
-    return 12;
+inline size_t GetFieldDefaultValueSize(double version = 0, int typeIndexSize = 4) {
+    size_t size = 0;
+    size += 4; // fieldIndex
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // typeIndex (TypeIndex)
+    size += 4; // dataIndex
+    return size;
 }
 
-inline size_t GetParameterDefaultValueSize() {
-    return 12;
+inline size_t GetParameterDefaultValueSize(double version = 0, int typeIndexSize = 4, int parameterIndexSize = 4) {
+    size_t size = 0;
+    size += (version >= 38.0) ? static_cast<size_t>(parameterIndexSize) : 4; // parameterIndex (ParameterIndex)
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // typeIndex (TypeIndex)
+    size += 4; // dataIndex
+    return size;
 }
 
 inline size_t GetPropertyDefinitionSize(double version) {
@@ -322,10 +384,10 @@ inline size_t GetPropertyDefinitionSize(double version) {
     return size;
 }
 
-inline size_t GetEventDefinitionSize(double version) {
+inline size_t GetEventDefinitionSize(double version, int typeIndexSize = 4) {
     size_t size = 0;
     size += 4; // nameIndex
-    size += 4; // typeIndex
+    size += (version >= 38.0) ? static_cast<size_t>(typeIndexSize) : 4; // typeIndex (TypeIndex)
     size += 4; // add
     size += 4; // remove
     size += 4; // raise

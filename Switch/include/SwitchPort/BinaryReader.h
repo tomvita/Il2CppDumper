@@ -21,6 +21,27 @@ public:
 
     size_t Position() const { return pos_; }
 
+    uint8_t ReadU8() {
+        EnsureAvailable(1);
+        return data_[pos_++];
+    }
+
+    int32_t ReadIndexValue(int byteWidth) {
+        switch (byteWidth) {
+        case 1: {
+            uint8_t v = ReadU8();
+            return (v == 0xFF) ? -1 : static_cast<int32_t>(v);
+        }
+        case 2: {
+            uint16_t v = ReadU16();
+            return (v == 0xFFFF) ? -1 : static_cast<int32_t>(v);
+        }
+        case 4:
+        default:
+            return ReadI32();
+        }
+    }
+
     uint16_t ReadU16() {
         EnsureAvailable(2);
         const uint16_t value = static_cast<uint16_t>(data_[pos_]) |

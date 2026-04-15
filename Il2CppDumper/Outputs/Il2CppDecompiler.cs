@@ -55,7 +55,23 @@ namespace Il2CppDumper
                         {
                             for (int i = 0; i < typeDef.interfaces_count; i++)
                             {
-                                var @interface = il2Cpp.types[metadata.interfaceIndices[typeDef.interfacesStart + i]];
+                                var idx = typeDef.interfacesStart + i;
+                                if (idx < 0 || idx >= metadata.interfaceIndices.Length)
+                                {
+#if DEBUG
+                                    Console.Error.WriteLine($"[DIAG] TypeDefIndex {typeDefIndex}: interfacesStart={typeDef.interfacesStart} i={i} idx={idx} interfaceIndices.Length={metadata.interfaceIndices.Length}");
+#endif
+                                    throw new IndexOutOfRangeException($"interfaceIndices[{idx}] out of bounds (Length={metadata.interfaceIndices.Length})");
+                                }
+                                var typeIdx = metadata.interfaceIndices[idx];
+                                if (typeIdx < 0 || typeIdx >= il2Cpp.types.Length)
+                                {
+#if DEBUG
+                                    Console.Error.WriteLine($"[DIAG] TypeDefIndex {typeDefIndex}: interfaceIndices[{idx}]={typeIdx} but il2Cpp.types.Length={il2Cpp.types.Length}");
+#endif
+                                    throw new IndexOutOfRangeException($"il2Cpp.types[{typeIdx}] out of bounds (Length={il2Cpp.types.Length})");
+                                }
+                                var @interface = il2Cpp.types[typeIdx];
                                 extends.Add(executor.GetTypeName(@interface, false, false));
                             }
                         }
@@ -425,7 +441,7 @@ namespace Il2CppDumper
                 {
                     var startRange = metadata.attributeDataRanges[attributeIndex];
                     var endRange = metadata.attributeDataRanges[attributeIndex + 1];
-                    metadata.Position = metadata.header.attributeDataOffset + startRange.startOffset;
+                    metadata.Position = metadata.GetAttributeDataOffset() + startRange.startOffset;
                     var buff = metadata.ReadBytes((int)(endRange.startOffset - startRange.startOffset));
                     var reader = new CustomAttributeDataReader(executor, buff);
                     if (reader.Count == 0)
